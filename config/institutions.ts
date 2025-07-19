@@ -6,12 +6,12 @@ export const institutionTreeConfig: InstitutionNode[] = [
   {
     hdPath: "m/44'/60'/0'/0", // 主要机构A
     depth: 0,
-    addressCount: 5,
+    addressCount: 1,
     childNodes: [
       {
         hdPath: "m/44'/60'/0'/0'/0", // A的子机构A1
         depth: 1,
-        addressCount: 8,
+        addressCount: 4,
         childNodes: [
           {
             hdPath: "m/44'/60'/0'/0'/0'/0", // A1的子机构A1a
@@ -35,7 +35,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
           {
             hdPath: "m/44'/60'/0'/0'/1'/0", // A2的子机构A2a
             depth: 2,
-            addressCount: 20,
+            addressCount: 7,
             childNodes: [],
           },
         ],
@@ -45,12 +45,12 @@ export const institutionTreeConfig: InstitutionNode[] = [
   {
     hdPath: "m/44'/60'/0'/1", // 主要机构B
     depth: 0,
-    addressCount: 4,
+    addressCount: 1,
     childNodes: [
       {
         hdPath: "m/44'/60'/0'/1'/0", // B的子机构B1
         depth: 1,
-        addressCount: 10,
+        addressCount: 7,
         childNodes: [
           {
             hdPath: "m/44'/60'/0'/1'/0'/0", // B1的子机构B1a
@@ -63,15 +63,29 @@ export const institutionTreeConfig: InstitutionNode[] = [
       {
         hdPath: "m/44'/60'/0'/1'/1", // B的子机构B2
         depth: 1,
-        addressCount: 7,
-        childNodes: [],
+        addressCount: 1,
+        childNodes: [
+          {
+            hdPath: "m/44'/60'/0'/1'/1'/0", // B1的子机构B2a
+            depth: 2,
+            addressCount: 5,
+            childNodes: [
+              {
+                hdPath: "m/44'/60'/0'/1'/1'/0'/0", // B1的子机构B2a1
+                depth: 3,
+                addressCount: 10,
+                childNodes: [],
+              },
+            ],
+          },
+        ],
       },
     ],
   },
   {
     hdPath: "m/44'/60'/0'/2", // 独立小机构C
     depth: 0,
-    addressCount: 3,
+    addressCount: 2,
     childNodes: [],
   },
 ]

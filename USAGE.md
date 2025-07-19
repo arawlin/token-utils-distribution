@@ -48,6 +48,8 @@ npx hardhat node
 # 在另一个终端部署测试Token
 npx hardhat deploy --network localhost
 
+npx hardhat run scripts/mint-tokens.js --network localhost
+
 # 运行完整测试流程
 npm run dry-run:all
 ```

@@ -8,6 +8,18 @@ export interface InstitutionNode {
   addressCount: number // 该机构生成的地址数量
   addresses?: string[] // 生成的地址列表
   privateKeys?: string[] // 生成的私钥列表
+  institutionName?: string // 机构名称
+  gasReceiveWindow?: { start: number; end: number } // Gas费接收时间窗口(相对时间，分钟)
+  tokenReceiveWindow?: { start: number; end: number } // Token接收时间窗口(相对时间，分钟)
+}
+
+// 按机构分组地址信息
+export interface InstitutionGroup {
+  institutionName: string
+  hdPath: string
+  addresses: string[]
+  gasReceiveWindow: { start: number; end: number }
+  tokenReceiveWindow: { start: number; end: number }
 }
 
 // Gas 分发配置
@@ -61,6 +73,8 @@ export interface DistributionTask {
   status: 'pending' | 'executing' | 'completed' | 'failed'
   txHash?: string
   error?: string
+  institutionGroup?: string // 所属机构组
+  dependsOn?: string[] // 依赖的任务ID（如token转账依赖gas转账完成）
 }
 
 // 分发进度

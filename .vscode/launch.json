@@ -1,0 +1,174 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "🔧 Init HD Tree (Force)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": ["init-hd-tree", "--network", "localhost", "--force"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "setup",
+        "order": 2
+      }
+    },
+    {
+      "name": "⛽ Distribute Gas (Live)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "distribute-gas",
+        "--network",
+        "localhost",
+        "--batch-size",
+        "3",
+        "--max-retries",
+        "3",
+        "--delay-ms",
+        "3000",
+        "--force"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "gas-distribution",
+        "order": 2
+      }
+    },
+    {
+      "name": "🪙 Distribute Tokens (Live)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "distribute-tokens",
+        "--network",
+        "localhost",
+        "--batch-size",
+        "5",
+        "--max-retries",
+        "3"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "token-distribution",
+        "order": 3
+      }
+    },
+    {
+      "name": "🕶️ Obfuscation (Circular Only)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "obfuscation",
+        "--network",
+        "localhost",
+        "--dry-run",
+        "--duration",
+        "3",
+        "--intensity",
+        "0.7",
+        "--circular-only",
+        "--max-retries",
+        "3"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "obfuscation",
+        "order": 2
+      }
+    },
+    {
+      "name": "🕶️ Obfuscation (Random Only)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "obfuscation",
+        "--network",
+        "localhost",
+        "--dry-run",
+        "--duration",
+        "3",
+        "--intensity",
+        "0.8",
+        "--random-only",
+        "--max-retries",
+        "3"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "obfuscation",
+        "order": 3
+      }
+    },
+    {
+      "name": "🚀 Concurrent Test (All Tasks)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/concurrent-test.js",
+      "args": [],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "testing",
+        "order": 1
+      }
+    }
+  ]
+}

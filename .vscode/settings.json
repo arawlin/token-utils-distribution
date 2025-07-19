@@ -1,6 +1,13 @@
 {
+  // 编辑器和格式化配置
   "editor.formatOnSave": true,
   "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit",
+    "source.organizeImports": "explicit"
+  },
+
+  // 语言特定格式化
   "[solidity]": {
     "editor.defaultFormatter": "JuanBlanco.solidity"
   },
@@ -13,6 +20,62 @@
   "[json]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+
+  // TypeScript 配置
+  "typescript.preferences.includePackageJsonAutoImports": "on",
+  "typescript.suggest.autoImports": true,
+  "typescript.updateImportsOnFileMove.enabled": "always",
+
+  // 调试配置
+  "debug.internalConsoleOptions": "openOnSessionStart",
+  "debug.terminal.clearBeforeReusing": true,
+  "debug.console.fontSize": 14,
+  "debug.console.lineHeight": 1.4,
+
+  // 文件关联和排除
+  "files.associations": {
+    "*.ts": "typescript",
+    "*.js": "javascript",
+    "*.json": "jsonc",
+    "*.log": "log"
+  },
+
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/artifacts": true,
+    "**/cache": true,
+    "**/typechain": true,
+    "**/.ws/task-locks.json": true
+  },
+
+  // 搜索配置
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/artifacts": true,
+    "**/cache": true,
+    "**/typechain": true,
+    "**/.ws": false
+  },
+
+  // 终端配置
+  "terminal.integrated.fontSize": 13,
+  "terminal.integrated.lineHeight": 1.2,
+
+  // Prettier 配置
   "prettier.requireConfig": true,
-  "solidity.formatter": "prettier"
+  "solidity.formatter": "prettier",
+
+  // 智能提示配置
+  "editor.suggest.snippetsPreventQuickSuggestions": false,
+  "editor.quickSuggestions": {
+    "other": true,
+    "comments": false,
+    "strings": true
+  },
+
+  // 代码折叠
+  "editor.foldingStrategy": "indentation",
+  "editor.showFoldingControls": "mouseover"
 }

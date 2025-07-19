@@ -3,7 +3,7 @@ import '@nomicfoundation/hardhat-toolbox'
 import 'hardhat-deploy'
 import 'dotenv/config'
 
-require('./tasks')
+import './tasks'
 
 const networkSettings = {
   gas: 'auto' as const,

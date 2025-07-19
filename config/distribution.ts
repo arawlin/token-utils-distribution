@@ -1,4 +1,4 @@
-import { GasDistributionConfig, TokenDistributionConfig, ObfuscationConfig } from '../types'
+import { GasDistributionConfig, ObfuscationConfig, TokenDistributionConfig } from '../types'
 
 // Gas 分发配置
 export const gasDistributionConfig: GasDistributionConfig = {
@@ -20,13 +20,13 @@ export const gasDistributionConfig: GasDistributionConfig = {
   },
   // 每个地址分配的Gas范围(ETH)
   gasAmounts: {
-    min: '0.001', // 最少0.001 ETH
+    min: '0.001', // 最少0.001 ETH  21000（基础转账） + 约 25000~50000（ERC20 transfer 逻辑） ≈ 45000~70000 gas. 70000 * 10 * 1e9 / 1e18 = 0.0007
     max: '0.005', // 最多0.005 ETH
   },
   // Gas Price 随机化范围(gwei)
   gasPriceRandomization: {
-    min: 15, // 最低15 gwei
-    max: 50, // 最高50 gwei
+    min: 5, // 最低5 gwei
+    max: 20, // 最高20 gwei
   },
 }
 

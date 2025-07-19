@@ -11,34 +11,44 @@ import {
   generateRandomEthAmount,
   formatEther,
   delay,
-  retry,
   Logger,
   generateTaskId,
 } from './utils'
+import { coordinator } from './coordinator'
 
 task('distribute-gas', 'Gas费分发任务')
   .addOptionalParam('configDir', '配置目录', './generated')
   .addOptionalParam('batchSize', '批处理大小', '10')
   .addOptionalParam('delayMs', '批次间延迟(毫秒)', '5000')
   .addFlag('dryRun', '干运行模式（不执行实际交易）')
+  .addFlag('force', '强制执行（跳过锁检查）')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, batchSize, delayMs, dryRun } = taskArgs
-
-    Logger.info('开始执行Gas分发任务')
-    Logger.info(`网络: ${hre.network.name}`)
-    Logger.info(`批处理大小: ${batchSize}`)
-    Logger.info(`干运行模式: ${dryRun}`)
-
-    const configPath = join(configDir, 'distribution-config.json')
-    const seedPath = join(configDir, 'master-seed.json')
-
-    // 检查配置文件
-    if (!existsSync(configPath) || !existsSync(seedPath)) {
-      Logger.error('配置文件不存在，请先运行 init-hd-tree 任务')
-      return
-    }
+    const { configDir, batchSize, delayMs, dryRun, force } = taskArgs
+    let taskId = ''
 
     try {
+      // 获取任务锁
+      if (!force) {
+        taskId = await coordinator.acquireTaskLock('distribute-gas')
+      }
+
+      Logger.info('开始执行Gas分发任务')
+      Logger.info(`网络: ${hre.network.name}`)
+      Logger.info(`批处理大小: ${batchSize}`)
+      Logger.info(`干运行模式: ${dryRun}`)
+
+      const configPath = join(configDir, 'distribution-config.json')
+      const seedPath = join(configDir, 'master-seed.json')
+
+      // 检查配置文件
+      if (!existsSync(configPath) || !existsSync(seedPath)) {
+        Logger.error('配置文件不存在，请先运行 init-hd-tree 任务')
+        return
+      }
+
+      // 清理资源文件
+      await coordinator.cleanup()
+
       // 加载配置
       const config: DistributionSystemConfig = JSON.parse(readFileSync(configPath, 'utf8'))
       const seedConfig = JSON.parse(readFileSync(seedPath, 'utf8'))
@@ -99,8 +109,19 @@ task('distribute-gas', 'Gas费分发任务')
       )
 
       Logger.info('Gas分发任务完成!')
+
+      // 释放任务锁
+      if (!force && taskId) {
+        await coordinator.releaseTaskLock(taskId, 'completed')
+      }
     } catch (error) {
       Logger.error('Gas分发任务失败:', error)
+
+      // 释放任务锁
+      if (!force && taskId) {
+        await coordinator.releaseTaskLock(taskId, 'failed')
+      }
+
       throw error
     }
   })
@@ -177,28 +198,61 @@ async function distributeToIntermediateWallets(
 
   Logger.info(`每个中间钱包需要: ${formatEther(gasPerIntermediate)} ETH`)
 
+  const gasPriceRec = await coordinator.getGasPriceRecommendation(provider)
+
   for (let i = 0; i < intermediateWallets.length; i++) {
     const intermediateWallet = intermediateWallets[i]
     const exchangeWallet = exchangeWallets[i % exchangeWallets.length]
 
     const amount = gasPerIntermediate + ethers.parseEther('0.01') // 额外0.01 ETH作为交易费
-    const gasPrice = generateRandomGasPrice(gasConfig.gasPriceRandomization.min, gasConfig.gasPriceRandomization.max)
+
+    // 检查余额
+    const balanceCheck = await coordinator.checkWalletBalance(
+      exchangeWallet.address,
+      amount + gasPriceRec.standard * 21000n,
+      provider,
+    )
+
+    if (!balanceCheck.sufficient) {
+      Logger.error(`交易所钱包余额不足: ${exchangeWallet.address}`)
+      Logger.error(`需要: ${formatEther(balanceCheck.required)}, 拥有: ${formatEther(balanceCheck.current)}`)
+      continue
+    }
 
     Logger.info(`${exchangeWallet.address} -> ${intermediateWallet.address}: ${formatEther(amount)} ETH`)
 
     if (!dryRun) {
       try {
-        const tx = await retry(async () => {
-          return await exchangeWallet.sendTransaction({
-            to: intermediateWallet.address,
-            value: amount,
-            gasPrice: gasPrice,
-          })
-        })
+        await coordinator.smartRetry(
+          async () => {
+            const nonce = await coordinator.getNextNonce(exchangeWallet.address, provider)
+            const gasPrice = generateRandomGasPrice(
+              gasConfig.gasPriceRandomization.min,
+              gasConfig.gasPriceRandomization.max,
+            )
 
-        Logger.info(`交易已发送: ${tx.hash}`)
+            const tx = await exchangeWallet.sendTransaction({
+              to: intermediateWallet.address,
+              value: amount,
+              gasPrice: gasPrice,
+              nonce: nonce,
+            })
+
+            Logger.info(`交易已发送: ${tx.hash}`)
+            return tx
+          },
+          {
+            maxRetries: 5,
+            baseDelay: 2000,
+            retryCondition: (error: Error) => {
+              const msg = error.message.toLowerCase()
+              return msg.includes('nonce') || msg.includes('replacement') || msg.includes('network')
+            },
+          },
+        )
       } catch (error) {
         Logger.error(`交易失败: ${exchangeWallet.address} -> ${intermediateWallet.address}`, error)
+        // 继续下一个，不中断整个流程
       }
     }
 
@@ -240,6 +294,8 @@ async function distributeToTargetAddresses(
 
   // 分批执行任务
   const batches = chunkArray(tasks, batchSize)
+  let totalCompleted = 0
+  let totalFailed = 0
 
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
     const batch = batches[batchIndex]
@@ -251,21 +307,55 @@ async function distributeToTargetAddresses(
       const walletIndex = intermediateWallets.findIndex(w => w.address === task.fromAddress)
       const wallet = intermediateWallets[walletIndex].connect(provider)
 
-      const gasPrice = generateRandomGasPrice(gasConfig.gasPriceRandomization.min, gasConfig.gasPriceRandomization.max)
-
       if (!dryRun) {
         try {
-          const tx = await retry(async () => {
-            return await wallet.sendTransaction({
-              to: task.toAddress,
-              value: BigInt(task.amount),
-              gasPrice: gasPrice,
-            })
-          })
+          // 检查余额
+          const balanceCheck = await coordinator.checkWalletBalance(
+            wallet.address,
+            BigInt(task.amount) + ethers.parseUnits('20', 'gwei') * 21000n,
+            provider,
+          )
 
-          task.status = 'completed'
-          task.txHash = tx.hash
-          Logger.debug(`Gas分发完成: ${task.fromAddress} -> ${task.toAddress} (${tx.hash})`)
+          if (!balanceCheck.sufficient) {
+            throw new Error(
+              `钱包余额不足: ${formatEther(balanceCheck.current)} < ${formatEther(balanceCheck.required)}`,
+            )
+          }
+
+          await coordinator.smartRetry(
+            async () => {
+              const nonce = await coordinator.getNextNonce(wallet.address, provider)
+              const gasPrice = generateRandomGasPrice(
+                gasConfig.gasPriceRandomization.min,
+                gasConfig.gasPriceRandomization.max,
+              )
+
+              const tx = await wallet.sendTransaction({
+                to: task.toAddress,
+                value: BigInt(task.amount),
+                gasPrice: gasPrice,
+                nonce: nonce,
+              })
+
+              task.status = 'completed'
+              task.txHash = tx.hash
+              Logger.debug(`Gas分发完成: ${task.fromAddress} -> ${task.toAddress} (${tx.hash})`)
+              return tx
+            },
+            {
+              maxRetries: 3,
+              baseDelay: 1000,
+              retryCondition: (error: Error) => {
+                const msg = error.message.toLowerCase()
+                return (
+                  msg.includes('nonce') ||
+                  msg.includes('replacement') ||
+                  msg.includes('network') ||
+                  msg.includes('insufficient')
+                )
+              },
+            },
+          )
         } catch (error) {
           task.status = 'failed'
           task.error = (error as Error).message
@@ -281,6 +371,14 @@ async function distributeToTargetAddresses(
 
     await Promise.all(promises)
 
+    // 统计批次结果
+    const batchCompleted = batch.filter(t => t.status === 'completed').length
+    const batchFailed = batch.filter(t => t.status === 'failed').length
+    totalCompleted += batchCompleted
+    totalFailed += batchFailed
+
+    Logger.info(`批次 ${batchIndex + 1} 完成: ${batchCompleted}/${batch.length} 成功`)
+
     // 批次间延迟
     if (batchIndex < batches.length - 1) {
       Logger.info(`等待 ${delayMs}ms 后执行下一批...`)
@@ -289,14 +387,21 @@ async function distributeToTargetAddresses(
   }
 
   // 统计结果
-  const completed = tasks.filter(t => t.status === 'completed').length
-  const failed = tasks.filter(t => t.status === 'failed').length
-
   Logger.info(`\n=== Gas分发统计 ===`)
   Logger.info(`总任务数: ${tasks.length}`)
-  Logger.info(`成功: ${completed}`)
-  Logger.info(`失败: ${failed}`)
-  Logger.info(`成功率: ${((completed / tasks.length) * 100).toFixed(2)}%`)
+  Logger.info(`成功: ${totalCompleted}`)
+  Logger.info(`失败: ${totalFailed}`)
+  Logger.info(`成功率: ${((totalCompleted / tasks.length) * 100).toFixed(2)}%`)
+
+  // 显示失败的任务详情
+  if (totalFailed > 0) {
+    Logger.info(`\n失败的任务:`)
+    tasks
+      .filter(t => t.status === 'failed')
+      .forEach(task => {
+        Logger.info(`  ${task.fromAddress} -> ${task.toAddress}: ${task.error}`)
+      })
+  }
 }
 
 // 数组分块工具函数

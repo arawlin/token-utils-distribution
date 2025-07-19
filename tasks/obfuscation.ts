@@ -10,37 +10,49 @@ import {
   generateRandomGasPrice,
   formatEther,
   delay,
-  retry,
   Logger,
   shuffleArray,
 } from './utils'
+import { coordinator } from './coordinator'
 
 task('obfuscation', '抗检测干扰交易模块')
   .addOptionalParam('configDir', '配置目录', './generated')
   .addOptionalParam('duration', '执行时长(分钟)', '60')
   .addOptionalParam('intensity', '干扰强度(0.1-1.0)', '0.3')
+  .addOptionalParam('maxRetries', '最大重试次数', '3')
   .addFlag('dryRun', '干运行模式（不执行实际交易）')
   .addFlag('circularOnly', '只执行循环交易')
   .addFlag('randomOnly', '只执行随机转账')
+  .addFlag('force', '强制执行（跳过锁检查）')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, duration, intensity, dryRun, circularOnly, randomOnly } = taskArgs
-
-    Logger.info('开始执行抗检测干扰交易')
-    Logger.info(`网络: ${hre.network.name}`)
-    Logger.info(`执行时长: ${duration} 分钟`)
-    Logger.info(`干扰强度: ${intensity}`)
-    Logger.info(`干运行模式: ${dryRun}`)
-
-    const configPath = join(configDir, 'distribution-config.json')
-    const seedPath = join(configDir, 'master-seed.json')
-
-    // 检查配置文件
-    if (!existsSync(configPath) || !existsSync(seedPath)) {
-      Logger.error('配置文件不存在，请先运行 init-hd-tree 任务')
-      return
-    }
+    const { configDir, duration, intensity, maxRetries, dryRun, circularOnly, randomOnly, force } = taskArgs
+    let taskId = ''
 
     try {
+      // 获取任务锁
+      if (!force) {
+        taskId = await coordinator.acquireTaskLock('obfuscation')
+      }
+
+      Logger.info('开始执行抗检测干扰交易')
+      Logger.info(`网络: ${hre.network.name}`)
+      Logger.info(`执行时长: ${duration} 分钟`)
+      Logger.info(`干扰强度: ${intensity}`)
+      Logger.info(`干运行模式: ${dryRun}`)
+      Logger.info(`最大重试次数: ${maxRetries}`)
+
+      const configPath = join(configDir, 'distribution-config.json')
+      const seedPath = join(configDir, 'master-seed.json')
+
+      // 检查配置文件
+      if (!existsSync(configPath) || !existsSync(seedPath)) {
+        Logger.error('配置文件不存在，请先运行 init-hd-tree 任务')
+        return
+      }
+
+      // 清理资源文件
+      await coordinator.cleanup()
+
       // 加载配置
       const config: DistributionSystemConfig = JSON.parse(readFileSync(configPath, 'utf8'))
       const seedConfig = JSON.parse(readFileSync(seedPath, 'utf8'))
@@ -115,8 +127,19 @@ task('obfuscation', '抗检测干扰交易模块')
       Logger.info(`随机转账数: ${randomCount}`)
       Logger.info(`平均间隔: ${Math.round(durationMs / 1000 / transactionCount)} 秒`)
       Logger.info('抗检测模块执行完成!')
+
+      // 释放任务锁
+      if (!force && taskId) {
+        await coordinator.releaseTaskLock(taskId, 'completed')
+      }
     } catch (error) {
       Logger.error('抗检测模块执行失败:', error)
+
+      // 释放任务锁
+      if (!force && taskId) {
+        await coordinator.releaseTaskLock(taskId, 'failed')
+      }
+
       throw error
     }
   })
@@ -181,16 +204,34 @@ async function executeCircularTransaction(wallets: Wallet[], obfuscationConfig: 
         return
       }
 
-      const tx = await retry(async () => {
-        return await fromWallet.sendTransaction({
-          to: toWallet.address,
-          value: amount,
-          gasPrice: gasPrice,
-          gasLimit: estimatedGas,
-        })
-      })
+      await coordinator.smartRetry(
+        async () => {
+          // 获取nonce并验证余额
+          const nonce = await coordinator.getNextNonce(fromWallet.address, fromWallet.provider!)
+          const balanceCheck = await coordinator.checkWalletBalance(fromWallet.address, totalCost, fromWallet.provider!)
 
-      Logger.debug(`循环交易完成: ${tx.hash}`)
+          if (!balanceCheck.sufficient) {
+            throw new Error(`钱包余额不足: 需要 ${totalCost}, 拥有 ${balanceCheck.current}`)
+          }
+
+          const tx = await fromWallet.sendTransaction({
+            to: toWallet.address,
+            value: amount,
+            gasPrice: gasPrice,
+            gasLimit: estimatedGas,
+            nonce: nonce,
+          })
+
+          const receipt = await tx.wait()
+          if (receipt && receipt.status === 1) {
+            Logger.debug(`循环交易完成: ${tx.hash}`)
+            return receipt
+          } else {
+            throw new Error(`循环交易失败: ${tx.hash}`)
+          }
+        },
+        { maxRetries: 3 },
+      )
 
       // 50%概率执行反向交易（形成真正的循环）
       if (Math.random() < 0.5) {
@@ -201,16 +242,38 @@ async function executeCircularTransaction(wallets: Wallet[], obfuscationConfig: 
         const reverseTotalCost = reverseAmount + gasPrice * estimatedGas
 
         if (reverseBalance >= reverseTotalCost) {
-          const reverseTx = await retry(async () => {
-            return await toWallet.sendTransaction({
-              to: fromWallet.address,
-              value: reverseAmount,
-              gasPrice: gasPrice,
-              gasLimit: estimatedGas,
-            })
-          })
+          await coordinator.smartRetry(
+            async () => {
+              // 获取nonce并验证余额
+              const nonce = await coordinator.getNextNonce(toWallet.address, toWallet.provider!)
+              const balanceCheck = await coordinator.checkWalletBalance(
+                toWallet.address,
+                reverseTotalCost,
+                toWallet.provider!,
+              )
 
-          Logger.debug(`反向循环交易完成: ${reverseTx.hash}`)
+              if (!balanceCheck.sufficient) {
+                throw new Error(`钱包余额不足进行反向交易: 需要 ${reverseTotalCost}, 拥有 ${balanceCheck.current}`)
+              }
+
+              const reverseTx = await toWallet.sendTransaction({
+                to: fromWallet.address,
+                value: reverseAmount,
+                gasPrice: gasPrice,
+                gasLimit: estimatedGas,
+                nonce: nonce,
+              })
+
+              const receipt = await reverseTx.wait()
+              if (receipt && receipt.status === 1) {
+                Logger.debug(`反向循环交易完成: ${reverseTx.hash}`)
+                return receipt
+              } else {
+                throw new Error(`反向循环交易失败: ${reverseTx.hash}`)
+              }
+            },
+            { maxRetries: 3 },
+          )
         }
       }
     } catch (error) {
@@ -260,16 +323,38 @@ async function executeRandomTransfer(wallets: Wallet[], obfuscationConfig: Obfus
         return
       }
 
-      const tx = await retry(async () => {
-        return await sourceWallet.sendTransaction({
-          to: targetAddress,
-          value: amount,
-          gasPrice: gasPrice,
-          gasLimit: estimatedGas,
-        })
-      })
+      await coordinator.smartRetry(
+        async () => {
+          // 获取nonce并验证余额
+          const nonce = await coordinator.getNextNonce(sourceWallet.address, sourceWallet.provider!)
+          const balanceCheck = await coordinator.checkWalletBalance(
+            sourceWallet.address,
+            totalCost,
+            sourceWallet.provider!,
+          )
 
-      Logger.debug(`随机转账完成: ${tx.hash}`)
+          if (!balanceCheck.sufficient) {
+            throw new Error(`钱包余额不足: 需要 ${totalCost}, 拥有 ${balanceCheck.current}`)
+          }
+
+          const tx = await sourceWallet.sendTransaction({
+            to: targetAddress,
+            value: amount,
+            gasPrice: gasPrice,
+            gasLimit: estimatedGas,
+            nonce: nonce,
+          })
+
+          const receipt = await tx.wait()
+          if (receipt && receipt.status === 1) {
+            Logger.debug(`随机转账完成: ${tx.hash}`)
+            return receipt
+          } else {
+            throw new Error(`随机转账失败: ${tx.hash}`)
+          }
+        },
+        { maxRetries: 3 },
+      )
     } catch (error) {
       Logger.error(`随机转账失败: ${sourceWallet.address} -> ${targetAddress}`, error)
     }

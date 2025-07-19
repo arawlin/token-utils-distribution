@@ -11,11 +11,11 @@ import {
   generateRandomGasPrice,
   formatTokenAmount,
   delay,
-  retry,
   Logger,
   generateTaskId,
   getCurrentTimestamp,
 } from './utils'
+import { coordinator } from './coordinator'
 
 // ERC20 Token ABI (简化版，只包含需要的方法)
 const ERC20_ABI = [
@@ -31,25 +31,35 @@ task('distribute-tokens', 'Token分发任务')
   .addOptionalParam('maxRetries', '最大重试次数', '3')
   .addFlag('dryRun', '干运行模式（不执行实际交易）')
   .addFlag('skipSafetyCheck', '跳过安全检查（小额测试）')
+  .addFlag('force', '强制执行（跳过锁检查）')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, batchSize, maxRetries, dryRun, skipSafetyCheck } = taskArgs
-
-    Logger.info('开始执行Token分发任务')
-    Logger.info(`网络: ${hre.network.name}`)
-    Logger.info(`批处理大小: ${batchSize}`)
-    Logger.info(`干运行模式: ${dryRun}`)
-    Logger.info(`跳过安全检查: ${skipSafetyCheck}`)
-
-    const configPath = join(configDir, 'distribution-config.json')
-    const seedPath = join(configDir, 'master-seed.json')
-
-    // 检查配置文件
-    if (!existsSync(configPath) || !existsSync(seedPath)) {
-      Logger.error('配置文件不存在，请先运行 init-hd-tree 任务')
-      return
-    }
+    const { configDir, batchSize, maxRetries, dryRun, skipSafetyCheck, force } = taskArgs
+    let taskId = ''
 
     try {
+      // 获取任务锁
+      if (!force) {
+        taskId = await coordinator.acquireTaskLock('distribute-tokens')
+      }
+
+      Logger.info('开始执行Token分发任务')
+      Logger.info(`网络: ${hre.network.name}`)
+      Logger.info(`批处理大小: ${batchSize}`)
+      Logger.info(`干运行模式: ${dryRun}`)
+      Logger.info(`跳过安全检查: ${skipSafetyCheck}`)
+
+      const configPath = join(configDir, 'distribution-config.json')
+      const seedPath = join(configDir, 'master-seed.json')
+
+      // 检查配置文件
+      if (!existsSync(configPath) || !existsSync(seedPath)) {
+        Logger.error('配置文件不存在，请先运行 init-hd-tree 任务')
+        return
+      }
+
+      // 清理资源文件
+      await coordinator.cleanup()
+
       // 加载配置
       const config: DistributionSystemConfig = JSON.parse(readFileSync(configPath, 'utf8'))
       // const seedConfig = JSON.parse(readFileSync(seedPath, 'utf8'))
@@ -121,8 +131,19 @@ task('distribute-tokens', 'Token分发任务')
       )
 
       Logger.info('Token分发任务完成!')
+
+      // 释放任务锁
+      if (!force && taskId) {
+        await coordinator.releaseTaskLock(taskId, 'completed')
+      }
     } catch (error) {
       Logger.error('Token分发任务失败:', error)
+
+      // 释放任务锁
+      if (!force && taskId) {
+        await coordinator.releaseTaskLock(taskId, 'failed')
+      }
+
       throw error
     }
   })
@@ -219,13 +240,33 @@ async function performSafetyCheck(
 
     if (!dryRun) {
       try {
-        const tx = await retry(async () => {
-          return await tokenContract.transfer(address, smallAmount, {
-            gasPrice: gasPrice,
-          })
-        })
+        await coordinator.smartRetry(
+          async () => {
+            // 获取nonce并验证余额
+            const provider = sourceWallet.provider!
+            const nonce = await coordinator.getNextNonce(sourceWallet.address, provider)
+            const balanceCheck = await coordinator.checkWalletBalance(sourceWallet.address, smallAmount, provider)
 
-        Logger.info(`小额测试成功: ${tx.hash}`)
+            if (!balanceCheck.sufficient) {
+              throw new Error(`钱包余额不足进行安全检查: 需要 ${smallAmount}, 拥有 ${balanceCheck.current}`)
+            }
+
+            const tx = await tokenContract.transfer(address, smallAmount, {
+              gasPrice: gasPrice,
+              nonce: nonce,
+            })
+
+            const receipt = await tx.wait()
+            if (receipt.status === 1) {
+              Logger.info(`小额测试成功: ${tx.hash}`)
+              return receipt
+            } else {
+              throw new Error(`小额测试交易失败: ${tx.hash}`)
+            }
+          },
+          { maxRetries: 3 },
+        )
+
         await delay(2000) // 2秒间隔
       } catch (error) {
         Logger.error(`小额测试失败: ${address}`, error)
@@ -299,17 +340,41 @@ async function executeDistributionTasks(
 
       if (!dryRun) {
         try {
-          const tx = await retry(async () => {
-            return await tokenContract.transfer(task.toAddress, amount, {
-              gasPrice: gasPrice,
-            })
-          }, maxRetries)
+          let txHash = ''
+
+          await coordinator.smartRetry(
+            async () => {
+              // 获取nonce并验证余额
+              const provider = sourceWallet.provider!
+              const nonce = await coordinator.getNextNonce(sourceWallet.address, provider)
+              const balanceCheck = await coordinator.checkWalletBalance(sourceWallet.address, amount, provider)
+
+              if (!balanceCheck.sufficient) {
+                throw new Error(`钱包余额不足: 需要 ${amount}, 拥有 ${balanceCheck.current}`)
+              }
+
+              const tx = await tokenContract.transfer(task.toAddress, amount, {
+                gasPrice: gasPrice,
+                nonce: nonce,
+              })
+
+              txHash = tx.hash
+              const receipt = await tx.wait()
+
+              if (receipt.status === 1) {
+                return receipt
+              } else {
+                throw new Error(`Token分发交易失败: ${tx.hash}`)
+              }
+            },
+            { maxRetries },
+          )
 
           task.status = 'completed'
-          task.txHash = tx.hash
+          task.txHash = txHash
           completedTasks++
 
-          Logger.info(`✅ Token分发成功: ${task.toAddress} (${tx.hash})`)
+          Logger.info(`✅ Token分发成功: ${task.toAddress} (${txHash})`)
         } catch (error) {
           task.status = 'failed'
           task.error = (error as Error).message

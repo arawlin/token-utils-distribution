@@ -51,21 +51,14 @@ task('distribute-gas', 'Gas费分发任务')
       // 清理资源文件
       await coordinator.cleanup()
 
+      const provider = hre.ethers.provider
+
       // 加载配置
-      const config: DistributionSystemConfig = JSON.parse(readFileSync(configPath, 'utf8'))
       const seedConfig = JSON.parse(readFileSync(seedPath, 'utf8'))
       const masterSeed = seedConfig.masterSeed
 
-      const provider = hre.ethers.provider
+      const config: DistributionSystemConfig = JSON.parse(readFileSync(configPath, 'utf8'))
       const gasConfig = config.gasDistribution
-
-      // 验证交易所钱包余额
-      Logger.info('验证交易所钱包余额...')
-      const exchangeWallets = await validateExchangeWallets(provider, gasConfig.exchangeSources)
-      if (exchangeWallets.length === 0) {
-        Logger.error('没有可用的交易所钱包')
-        return
-      }
 
       // 生成中间钱包
       Logger.info('生成中间钱包...')
@@ -82,8 +75,17 @@ task('distribute-gas', 'Gas费分发任务')
 
       Logger.info(`需要分发Gas的地址总数: ${targetAddresses.length}`)
 
-      // 阶段1: 从交易所向中间钱包分发Gas
+      // 阶段1: 从交易所向中间钱包分发Gas for test
       Logger.info('\n=== 阶段1: 交易所 -> 中间钱包 ===')
+
+      // 验证交易所钱包余额
+      Logger.info('验证交易所钱包余额...')
+      const exchangeWallets = await validateExchangeWallets(provider, gasConfig.exchangeSources)
+      if (exchangeWallets.length === 0) {
+        Logger.error('没有可用的交易所钱包')
+        return
+      }
+
       await distributeToIntermediateWallets(
         provider,
         exchangeWallets,
@@ -96,7 +98,7 @@ task('distribute-gas', 'Gas费分发任务')
 
       if (!dryRun) {
         Logger.info('等待中间钱包交易确认...')
-        await delay(30000) // 等待30秒让交易确认
+        await delay(2000) // 等待30秒让交易确认
       }
 
       // 阶段2: 从中间钱包向目标地址分发Gas
@@ -209,7 +211,7 @@ async function distributeToIntermediateWallets(
     const intermediateWallet = intermediateWallets[i]
     const exchangeWallet = exchangeWallets[i % exchangeWallets.length]
 
-    const amount = gasPerIntermediate + ethers.parseEther('0.01') // 额外0.01 ETH作为交易费
+    const amount = gasPerIntermediate + ethers.parseEther('0.001') // 额外0.001 ETH作为交易费
 
     // 检查余额
     const balanceCheck = await coordinator.checkWalletBalance(

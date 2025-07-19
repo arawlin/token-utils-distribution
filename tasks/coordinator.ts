@@ -1,7 +1,7 @@
-import { writeFileSync, readFileSync, existsSync } from 'fs'
-import { join } from 'path'
-import { ethers } from 'ethers'
 import type { Provider } from 'ethers'
+import { ethers } from 'ethers'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import { Logger } from './utils'
 
 export interface TaskLockInfo {
@@ -18,6 +18,13 @@ export interface ResourceUsage {
   lastUpdate: number
 }
 
+// 用于文件存储的序列化版本
+interface SerializableResourceUsage {
+  nonce: number
+  gasUsed: string // 将 bigint 序列化为字符串
+  lastUpdate: number
+}
+
 /**
  * 任务协调器 - 管理并发任务的资源竞争和状态同步
  */
@@ -30,6 +37,38 @@ export class TaskCoordinator {
     this.lockDir = configDir
     this.resourceFile = join(configDir, 'resource-usage.json')
     this.lockFile = join(configDir, 'task-locks.json')
+  }
+
+  /**
+   * 序列化 ResourceUsage 对象（将 bigint 转换为字符串）
+   */
+  private serializeResourceUsage(usage: Record<string, ResourceUsage>): Record<string, SerializableResourceUsage> {
+    const serialized: Record<string, SerializableResourceUsage> = {}
+    for (const [address, data] of Object.entries(usage)) {
+      serialized[address] = {
+        nonce: data.nonce,
+        gasUsed: data.gasUsed.toString(),
+        lastUpdate: data.lastUpdate,
+      }
+    }
+    return serialized
+  }
+
+  /**
+   * 反序列化 ResourceUsage 对象（将字符串转换为 bigint）
+   */
+  private deserializeResourceUsage(
+    serialized: Record<string, SerializableResourceUsage>,
+  ): Record<string, ResourceUsage> {
+    const usage: Record<string, ResourceUsage> = {}
+    for (const [address, data] of Object.entries(serialized)) {
+      usage[address] = {
+        nonce: data.nonce,
+        gasUsed: BigInt(data.gasUsed),
+        lastUpdate: data.lastUpdate,
+      }
+    }
+    return usage
   }
 
   /**
@@ -106,7 +145,10 @@ export class TaskCoordinator {
 
     if (existsSync(this.resourceFile)) {
       try {
-        resourceUsage = JSON.parse(readFileSync(this.resourceFile, 'utf8'))
+        const serializedData: Record<string, SerializableResourceUsage> = JSON.parse(
+          readFileSync(this.resourceFile, 'utf8'),
+        )
+        resourceUsage = this.deserializeResourceUsage(serializedData)
       } catch (error) {
         Logger.warn('读取资源使用文件失败:', error)
       }
@@ -129,10 +171,44 @@ export class TaskCoordinator {
       lastUpdate: Date.now(),
     }
 
-    writeFileSync(this.resourceFile, JSON.stringify(resourceUsage, null, 2))
+    // 序列化并保存到文件
+    const serializedUsage = this.serializeResourceUsage(resourceUsage)
+    writeFileSync(this.resourceFile, JSON.stringify(serializedUsage, null, 2))
 
     Logger.debug(`获取nonce: ${walletAddress} -> ${nextNonce}`)
     return nextNonce
+  }
+
+  /**
+   * 更新钱包的Gas使用量
+   */
+  async updateGasUsage(walletAddress: string, gasUsed: bigint): Promise<void> {
+    let resourceUsage: Record<string, ResourceUsage> = {}
+
+    if (existsSync(this.resourceFile)) {
+      try {
+        const serializedData: Record<string, SerializableResourceUsage> = JSON.parse(
+          readFileSync(this.resourceFile, 'utf8'),
+        )
+        resourceUsage = this.deserializeResourceUsage(serializedData)
+      } catch (error) {
+        Logger.warn('读取资源使用文件失败:', error)
+      }
+    }
+
+    // 更新或创建记录
+    const existingUsage = resourceUsage[walletAddress]
+    resourceUsage[walletAddress] = {
+      nonce: existingUsage?.nonce || 0,
+      gasUsed: (existingUsage?.gasUsed || 0n) + gasUsed,
+      lastUpdate: Date.now(),
+    }
+
+    // 序列化并保存到文件
+    const serializedUsage = this.serializeResourceUsage(resourceUsage)
+    writeFileSync(this.resourceFile, JSON.stringify(serializedUsage, null, 2))
+
+    Logger.debug(`更新Gas使用量: ${walletAddress} +${gasUsed}`)
   }
 
   /**
@@ -264,7 +340,10 @@ export class TaskCoordinator {
     try {
       // 清理过期的资源使用记录
       if (existsSync(this.resourceFile)) {
-        const resourceUsage: Record<string, ResourceUsage> = JSON.parse(readFileSync(this.resourceFile, 'utf8'))
+        const serializedData: Record<string, SerializableResourceUsage> = JSON.parse(
+          readFileSync(this.resourceFile, 'utf8'),
+        )
+        const resourceUsage: Record<string, ResourceUsage> = this.deserializeResourceUsage(serializedData)
         const now = Date.now()
 
         Object.keys(resourceUsage).forEach(address => {
@@ -274,7 +353,9 @@ export class TaskCoordinator {
           }
         })
 
-        writeFileSync(this.resourceFile, JSON.stringify(resourceUsage, null, 2))
+        // 重新序列化并保存
+        const cleanedSerializedData = this.serializeResourceUsage(resourceUsage)
+        writeFileSync(this.resourceFile, JSON.stringify(cleanedSerializedData, null, 2))
       }
 
       // 清理过期的锁

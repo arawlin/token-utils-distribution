@@ -3,7 +3,7 @@ import { ethers } from 'ethers'
 import { existsSync, readFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
-import { generateInstitutionBasedTasks, getAllNodes, getInstitutionGroups } from '../config/institutions'
+import { generateInstitutionBasedTasks, getInstitutionGroups } from '../config/institutions'
 import { DistributionSystemConfig, DistributionTask, GasDistributionConfig, InstitutionGroup } from '../types'
 import { coordinator } from './coordinator'
 import {
@@ -71,8 +71,7 @@ task('distribute-gas', 'Gas费分发任务')
 
       // 获取所有需要Gas的地址 - 使用机构分组
       Logger.info('收集目标地址...')
-      const allNodes = getAllNodes(config.institutionTree)
-      const institutionGroups = getInstitutionGroups(allNodes)
+      const institutionGroups = getInstitutionGroups(config.institutionTree)
       const totalTargetAddresses = institutionGroups.reduce((sum, group) => sum + group.addresses.length, 0)
 
       Logger.info(`需要分发Gas的地址总数: ${totalTargetAddresses}`)

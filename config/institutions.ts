@@ -173,8 +173,8 @@ export function getInstitutionGroups(nodes: InstitutionNode[]): InstitutionGroup
         institutionName: node.institutionName || `Institution-${node.hdPath}`,
         hdPath: node.hdPath,
         addresses: [...node.addresses],
-        gasReceiveWindow: node.gasReceiveWindow || { start: 0, end: 30 },
-        tokenReceiveWindow: node.tokenReceiveWindow || { start: 60, end: 90 },
+        gasReceiveWindow: node.gasReceiveWindow!,
+        tokenReceiveWindow: node.tokenReceiveWindow!,
       })
     }
 

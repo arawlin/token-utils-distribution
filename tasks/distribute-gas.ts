@@ -1,29 +1,30 @@
-import { task } from 'hardhat/config'
-import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import type { Provider, Wallet } from 'ethers'
 import { ethers } from 'ethers'
-import type { Wallet, Provider } from 'ethers'
-import { DistributionSystemConfig, DistributionTask, InstitutionNode, GasDistributionConfig } from '../types'
+import { existsSync, readFileSync } from 'fs'
+import { task } from 'hardhat/config'
+import { join } from 'path'
 import { getAllNodes } from '../config/institutions'
-import {
-  generateWalletFromPath,
-  generateRandomGasPrice,
-  generateRandomEthAmount,
-  formatEther,
-  delay,
-  Logger,
-  generateTaskId,
-} from './utils'
+import { DistributionSystemConfig, DistributionTask, GasDistributionConfig, InstitutionNode } from '../types'
 import { coordinator } from './coordinator'
+import {
+  delay,
+  formatEther,
+  generateRandomEthAmount,
+  generateRandomGasPrice,
+  generateTaskId,
+  generateWalletFromPath,
+  Logger,
+} from './utils'
 
 task('distribute-gas', 'Gas费分发任务')
   .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('batchSize', '批处理大小', '10')
   .addOptionalParam('delayMs', '批次间延迟(毫秒)', '5000')
+  .addOptionalParam('maxRetries', '最大重试次数', '3')
   .addFlag('dryRun', '干运行模式（不执行实际交易）')
   .addFlag('force', '强制执行（跳过锁检查）')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, batchSize, delayMs, dryRun, force } = taskArgs
+    const { configDir, batchSize, delayMs, maxRetries, dryRun, force } = taskArgs
     let taskId = ''
 
     try {
@@ -35,6 +36,7 @@ task('distribute-gas', 'Gas费分发任务')
       Logger.info('开始执行Gas分发任务')
       Logger.info(`网络: ${hre.network.name}`)
       Logger.info(`批处理大小: ${batchSize}`)
+      Logger.info(`最大重试次数: ${maxRetries}`)
       Logger.info(`干运行模式: ${dryRun}`)
 
       const configPath = join(configDir, 'distribution-config.json')
@@ -88,6 +90,7 @@ task('distribute-gas', 'Gas费分发任务')
         intermediateWallets,
         targetAddresses.length,
         gasConfig,
+        parseInt(maxRetries),
         dryRun,
       )
 
@@ -105,6 +108,7 @@ task('distribute-gas', 'Gas费分发任务')
         gasConfig,
         parseInt(batchSize),
         parseInt(delayMs),
+        parseInt(maxRetries),
         dryRun,
       )
 
@@ -191,6 +195,7 @@ async function distributeToIntermediateWallets(
   intermediateWallets: Wallet[],
   totalTargetAddresses: number,
   gasConfig: GasDistributionConfig,
+  maxRetries: number,
   dryRun: boolean,
 ) {
   const totalGasNeeded = BigInt(totalTargetAddresses) * ethers.parseEther(gasConfig.gasAmounts.max)
@@ -242,7 +247,7 @@ async function distributeToIntermediateWallets(
             return tx
           },
           {
-            maxRetries: 5,
+            maxRetries,
             baseDelay: 2000,
             retryCondition: (error: Error) => {
               const msg = error.message.toLowerCase()
@@ -268,6 +273,7 @@ async function distributeToTargetAddresses(
   gasConfig: GasDistributionConfig,
   batchSize: number,
   delayMs: number,
+  maxRetries: number,
   dryRun: boolean,
 ) {
   const tasks: DistributionTask[] = []
@@ -343,7 +349,7 @@ async function distributeToTargetAddresses(
               return tx
             },
             {
-              maxRetries: 3,
+              maxRetries,
               baseDelay: 1000,
               retryCondition: (error: Error) => {
                 const msg = error.message.toLowerCase()

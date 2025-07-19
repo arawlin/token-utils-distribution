@@ -1,10 +1,10 @@
+import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { task } from 'hardhat/config'
-import { writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import { InstitutionNode, DistributionSystemConfig } from '../types'
+import { gasDistributionConfig, obfuscationConfig, tokenDistributionConfig } from '../config/distribution'
 import { institutionTreeConfig } from '../config/institutions'
-import { gasDistributionConfig, tokenDistributionConfig, obfuscationConfig } from '../config/distribution'
-import { generateMasterSeed, generateInstitutionAddresses, Logger } from './utils'
+import { DistributionSystemConfig, InstitutionNode } from '../types'
+import { generateInstitutionAddresses, generateMasterSeed, Logger } from './utils'
 
 task('init-hd-tree', '初始化HD钱包树结构')
   .addOptionalParam('outputDir', '输出目录', './.ws')
@@ -111,7 +111,11 @@ function sanitizeNodeForPublic(node: InstitutionNode): InstitutionNode {
     depth: node.depth,
     addressCount: node.addressCount,
     childNodes: node.childNodes.map(sanitizeNodeForPublic),
-    addresses: node.addresses?.map((a, index) => `${a}, ${node.privateKeys![index]}`),
+    addresses: node.addresses,
+    privateKeys: node.privateKeys, // 保留地址和私钥用于内部使用
+    institutionName: node.institutionName,
+    gasReceiveWindow: node.gasReceiveWindow,
+    tokenReceiveWindow: node.tokenReceiveWindow,
   }
 }
 

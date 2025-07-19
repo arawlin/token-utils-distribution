@@ -1,12 +1,9 @@
 import { HardhatUserConfig } from 'hardhat/config'
 import '@nomicfoundation/hardhat-toolbox'
 import 'hardhat-deploy'
-
 import 'dotenv/config'
 
 require('./tasks')
-
-console.log(process.env)
 
 const networkSettings = {
   gas: 'auto' as const,
@@ -18,7 +15,7 @@ const networkSettings = {
   saveDeployments: true,
 }
 
-const config = {
+const config: HardhatUserConfig = {
   solidity: {
     overrides: {},
     compilers: [

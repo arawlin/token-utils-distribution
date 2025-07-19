@@ -26,7 +26,7 @@ const ERC20_ABI = [
 ]
 
 task('distribute-tokens', 'Token分发任务')
-  .addOptionalParam('configDir', '配置目录', './generated')
+  .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('batchSize', '批处理大小', '5')
   .addOptionalParam('maxRetries', '最大重试次数', '3')
   .addFlag('dryRun', '干运行模式（不执行实际交易）')

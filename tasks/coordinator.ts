@@ -26,7 +26,7 @@ export class TaskCoordinator {
   private resourceFile: string
   private lockFile: string
 
-  constructor(configDir: string = './generated') {
+  constructor(configDir: string = './.ws') {
     this.lockDir = configDir
     this.resourceFile = join(configDir, 'resource-usage.json')
     this.lockFile = join(configDir, 'task-locks.json')

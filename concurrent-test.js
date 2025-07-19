@@ -191,7 +191,7 @@ if (require.main === module) {
 
   // 检查是否有配置文件
   const fs = require('fs')
-  const configPath = path.join(__dirname, 'generated', 'distribution-config.json')
+  const configPath = path.join(__dirname, '.ws', 'distribution-config.json')
 
   if (!fs.existsSync(configPath)) {
     colorLog('red', '❌ 未找到配置文件，请先运行 init-hd-tree 任务：')

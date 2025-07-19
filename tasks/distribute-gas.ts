@@ -17,7 +17,7 @@ import {
 import { coordinator } from './coordinator'
 
 task('distribute-gas', 'Gas费分发任务')
-  .addOptionalParam('configDir', '配置目录', './generated')
+  .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('batchSize', '批处理大小', '10')
   .addOptionalParam('delayMs', '批次间延迟(毫秒)', '5000')
   .addFlag('dryRun', '干运行模式（不执行实际交易）')

@@ -16,7 +16,7 @@ import {
 import { coordinator } from './coordinator'
 
 task('obfuscation', '抗检测干扰交易模块')
-  .addOptionalParam('configDir', '配置目录', './generated')
+  .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('duration', '执行时长(分钟)', '60')
   .addOptionalParam('intensity', '干扰强度(0.1-1.0)', '0.3')
   .addOptionalParam('maxRetries', '最大重试次数', '3')

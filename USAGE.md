@@ -141,7 +141,7 @@ Gas费分发任务，确保所有地址都有足够的ETH进行Token转账。
 npx hardhat distribute-gas
 
 # 高级选项
-npx hardhat distribute-gas --config-dir ./generated --batch-size 5 --delay-ms 3000 --dry-run
+npx hardhat distribute-gas --config-dir ./.ws --batch-size 5 --delay-ms 3000 --dry-run
 ```
 
 选项说明：
@@ -195,7 +195,7 @@ npx hardhat obfuscation --duration 120 --intensity 0.5 --circular-only --dry-run
 ### 私钥管理
 
 - 所有私钥都存储在 `.env` 文件中
-- 生成的主种子保存在 `generated/master-seed.json`
+- 生成的主种子保存在 `.ws/master-seed.json`
 - **绝对不要** 将这些文件提交到版本控制系统
 - 建议使用硬件钱包或多重签名钱包管理大额资金
 
@@ -260,7 +260,7 @@ npx hardhat distribute-tokens
 
 如果任务执行中断，可以：
 
-1. 检查 `generated/` 目录中的配置文件
+1. 检查 `.ws/` 目录中的配置文件
 2. 查看日志确定执行进度
 3. 手动调整配置或重新运行任务
 
@@ -272,7 +272,7 @@ npx hardhat distribute-tokens
 
 ```bash
 # 获取所有生成的地址
-cat generated/distribution-config.json | grep -o "0x[a-fA-F0-9]\{40\}"
+cat .ws/distribution-config.json | grep -o "0x[a-fA-F0-9]\{40\}"
 
 # 使用Etherscan API批量查询余额
 # （需要实现自定义脚本）

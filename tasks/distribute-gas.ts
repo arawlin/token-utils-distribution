@@ -7,6 +7,7 @@ import { getAllNodes } from '../config/institutions'
 import { DistributionSystemConfig, DistributionTask, GasDistributionConfig, InstitutionNode } from '../types'
 import { coordinator } from './coordinator'
 import {
+  chunkArray,
   delay,
   formatEther,
   generateRandomEthAmount,
@@ -410,13 +411,4 @@ async function distributeToTargetAddresses(
         Logger.info(`  ${task.fromAddress} -> ${task.toAddress}: ${task.error}`)
       })
   }
-}
-
-// 数组分块工具函数
-function chunkArray<T>(array: T[], chunkSize: number): T[][] {
-  const chunks: T[][] = []
-  for (let i = 0; i < array.length; i += chunkSize) {
-    chunks.push(array.slice(i, i + chunkSize))
-  }
-  return chunks
 }

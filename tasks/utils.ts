@@ -1,5 +1,5 @@
-import { ethers } from 'ethers'
 import { randomBytes } from 'crypto'
+import { ethers } from 'ethers'
 import { InstitutionNode } from '../types'
 
 // 生成正态分布随机数（Box-Muller变换）
@@ -39,12 +39,25 @@ export function generateRandomGasPrice(min: number, max: number): bigint {
   return ethers.parseUnits(randomGwei.toFixed(2), 'gwei')
 }
 
-// 生成随机ETH数量
+// 生成随机ETH数量（模拟真实用户行为的精度）
 export function generateRandomEthAmount(min: string, max: string): bigint {
   const minNum = parseFloat(min)
   const maxNum = parseFloat(max)
+
+  // 计算最小值的小数位数
+  const minDecimals = (min.split('.')[1] || '').length
+  // 精度最多比min小两位，但至少保持4位小数（模拟真实用户）
+  const precision = Math.max(4, minDecimals + 2)
+
+  // 生成随机数
   const randomAmount = Math.random() * (maxNum - minNum) + minNum
-  return ethers.parseEther(randomAmount.toFixed(18))
+
+  // 根据计算的精度进行四舍五入，模拟用户行为
+  // 用户通常不会使用超过6位小数的ETH金额
+  const finalPrecision = Math.min(precision, 6)
+  const roundedAmount = Math.round(randomAmount * Math.pow(10, finalPrecision)) / Math.pow(10, finalPrecision)
+
+  return ethers.parseEther(roundedAmount.toFixed(finalPrecision))
 }
 
 // 从HD钱包路径生成钱包

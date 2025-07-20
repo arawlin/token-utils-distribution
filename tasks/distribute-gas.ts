@@ -3,8 +3,8 @@ import { ethers } from 'ethers'
 import { existsSync, readFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
-import { getGasDistributionTargets, getNodesByDepth, institutionTreeConfig } from '../config/institutions'
-import { DistributionSystemConfig, DistributionTask, GasDistributionConfig, InstitutionNode } from '../types'
+import { getGasDistributionTargets, getNodesByDepth } from '../config/institutions'
+import { DistributionSystemConfig, DistributionTask, GasDistributionConfig } from '../types'
 import { coordinator } from './coordinator'
 import {
   chunkArray,
@@ -63,6 +63,7 @@ task('distribute-gas', 'Gas费分发任务')
       // 生成中间钱包
       Logger.info('生成中间钱包...')
       const intermediateWallets = generateIntermediateWallets(
+        provider,
         masterSeed,
         gasConfig.intermediateWallets.hdPath,
         gasConfig.intermediateWallets.count,
@@ -70,8 +71,8 @@ task('distribute-gas', 'Gas费分发任务')
 
       // 获取所有需要Gas的地址 - 使用层级机构配置
       Logger.info('收集目标地址...')
-      const allNodes = Array.from(getNodesByDepth(institutionTreeConfig).values()).flat()
-      const distributionTargets = getGasDistributionTargets(allNodes)
+      const allNodes = Array.from(getNodesByDepth(config.institutionTree).values()).flat()
+      const distributionTargets = getGasDistributionTargets(config.institutionTree)
 
       const totalDistributionAddresses = distributionTargets.distributionGas.length
       const totalTradingAddresses = distributionTargets.tradingGas.length
@@ -113,8 +114,7 @@ task('distribute-gas', 'Gas费分发任务')
       await distributeHierarchicalGas(
         provider,
         intermediateWallets,
-        allNodes,
-        gasConfig,
+        config,
         parseInt(batchSize),
         parseInt(delayMs),
         parseInt(maxRetries),
@@ -173,11 +173,11 @@ async function validateExchangeWallets(
 }
 
 // 生成中间钱包
-function generateIntermediateWallets(masterSeed: string, hdPath: string, count: number): Wallet[] {
+function generateIntermediateWallets(provider: Provider, masterSeed: string, hdPath: string, count: number): Wallet[] {
   const wallets: Wallet[] = []
 
   for (let i = 0; i < count; i++) {
-    const wallet = generateWalletFromPath(masterSeed, hdPath, i)
+    const wallet = generateWalletFromPath(masterSeed, hdPath, i).connect(provider)
     wallets.push(wallet)
   }
 
@@ -189,17 +189,18 @@ function generateIntermediateWallets(masterSeed: string, hdPath: string, count: 
 async function distributeHierarchicalGas(
   provider: Provider,
   intermediateWallets: Wallet[],
-  nodes: InstitutionNode[],
-  gasConfig: GasDistributionConfig,
+  config: DistributionSystemConfig,
   batchSize: number,
   delayMs: number,
   maxRetries: number,
   dryRun: boolean,
 ) {
+  const { institutionTree, gasDistribution } = config
   const baseTime = Date.now()
 
+  const allNodes = Array.from(getNodesByDepth(config.institutionTree).values()).flat()
   // 获取不同类型的gas分发目标
-  const gasTargets = getGasDistributionTargets(nodes)
+  const gasTargets = getGasDistributionTargets(institutionTree)
 
   Logger.info(
     `分发Gas目标: ${gasTargets.distributionGas.length} 个分发地址, ${gasTargets.tradingGas.length} 个交易地址`,
@@ -210,7 +211,7 @@ async function distributeHierarchicalGas(
     Logger.info(`\n=== 分发Gas阶段1: 分发者地址 (${gasTargets.distributionGas.length} 个) ===`)
 
     const distributionTasks: DistributionTask[] = gasTargets.distributionGas.map(target => {
-      const node = nodes.find(n => n.institutionName === target.institutionName)
+      const node = allNodes.find(n => n.institutionName === target.institutionName)
       const window = node?.gasReceiveWindow || { start: 0, end: 30 }
 
       const windowStartMs = baseTime + window.start * 60 * 1000
@@ -235,7 +236,7 @@ async function distributeHierarchicalGas(
       provider,
       intermediateWallets,
       distributionTasks,
-      gasConfig,
+      gasDistribution,
       batchSize,
       delayMs,
       maxRetries,
@@ -271,7 +272,7 @@ async function distributeHierarchicalGas(
       }
 
       const tradingTasks: DistributionTask[] = targets.map(target => {
-        const node = nodes.find(n => n.institutionName === target.institutionName)
+        const node = allNodes.find(n => n.institutionName === target.institutionName)
         const window = node?.gasReceiveWindow || { start: 0, end: 30 }
 
         const windowStartMs = baseTime + window.start * 60 * 1000 + 30 * 60 * 1000 // 分发gas后30分钟开始交易gas
@@ -296,7 +297,7 @@ async function distributeHierarchicalGas(
         provider,
         intermediateWallets,
         tradingTasks,
-        gasConfig,
+        gasDistribution,
         batchSize,
         delayMs,
         maxRetries,
@@ -369,7 +370,7 @@ async function executeGasDistributionTasks(
         }
 
         const amount = BigInt(task.amount)
-        const gasPrice = generateRandomGasPrice(15, 30) // Gas分发使用较低的gas price
+        const gasPrice = (await coordinator.getGasPriceRecommendation(provider)).standard
 
         Logger.info(`Gas分发: ${task.toAddress} - ${formatEther(amount)} ETH (${task.institutionGroup || '未知机构'})`)
 

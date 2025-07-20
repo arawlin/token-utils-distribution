@@ -8,11 +8,10 @@ import {
   getDistributorAddresses,
   getHolderAddresses,
   getNodesByDepth,
-  institutionTreeConfig,
 } from '../config/institutions'
-import { DistributionSystemConfig, DistributionTask, TokenDistributionConfig } from '../types'
+import { DistributionSystemConfig, DistributionTask, InstitutionNode, TokenDistributionConfig } from '../types'
 import { coordinator } from './coordinator'
-import { chunkArray, delay, formatTokenAmount, generateRandomGasPrice, Logger } from './utils'
+import { chunkArray, delay, formatTokenAmount, Logger } from './utils'
 
 // ERC20 Token ABI (简化版，只包含需要的方法)
 const ERC20_ABI = [
@@ -69,9 +68,9 @@ task('distribute-tokens', 'Token分发任务')
       Logger.info('初始化Token合约和源钱包...')
       const { tokenContract, sourceWallet, tokenInfo } = await initializeTokenContract(provider, tokenConfig)
 
-      // 获取所有机构节点
+      // 获取所有机构节点 - 使用配置文件中的机构树，保持一致性
       Logger.info('收集Token分发目标...')
-      const allNodes = Array.from(getNodesByDepth(institutionTreeConfig).values()).flat()
+      const allNodes = Array.from(getNodesByDepth(config.institutionTree).values()).flat()
       const totalTargetAddresses = allNodes.reduce((sum, node) => sum + node.addressCount, 0)
 
       Logger.info(`需要分发Token的地址总数: ${totalTargetAddresses}`)
@@ -98,12 +97,13 @@ task('distribute-tokens', 'Token分发任务')
       // 执行安全检查（小额测试）- 使用前几个机构组的地址
       if (!skipSafetyCheck) {
         Logger.info('\n=== 执行安全检查 ===')
-        // 使用主机构的一些地址进行安全检查
-        const mainInstitutions = getNodesByDepth(institutionTreeConfig).get(0) || []
+        // 使用配置中的机构树，保持一致性
+        const mainInstitutions = getNodesByDepth(config.institutionTree).get(0) || []
         const testAddresses = mainInstitutions
           .slice(0, 2)
           .flatMap(institution => (institution.addresses || []).slice(0, 2))
         await performSafetyCheck(
+          provider,
           tokenContract,
           sourceWallet,
           testAddresses, // 使用前2个机构组的前2个地址进行安全检查
@@ -121,8 +121,10 @@ task('distribute-tokens', 'Token分发任务')
       // 执行主要分发 - 层级分发
       Logger.info('\n=== 执行层级Token分发 ===')
       await executeHierarchicalTokenDistribution(
+        provider,
         tokenContract,
         sourceWallet,
+        config.institutionTree, // 使用配置中的机构树
         tokenConfig, // 传递token配置
         tokenInfo,
         parseInt(batchSize),
@@ -171,6 +173,7 @@ async function initializeTokenContract(provider: Provider, tokenConfig: TokenDis
 // 按机构分组执行Token分发
 // Token分发任务执行器
 async function executeTokenDistributionTasks(
+  provider: Provider,
   tokenContract: Contract,
   sourceWallet: Wallet,
   tasks: DistributionTask[],
@@ -222,7 +225,7 @@ async function executeTokenDistributionTasks(
         }
 
         const amount = BigInt(task.amount)
-        const gasPrice = generateRandomGasPrice(20, 60)
+        const gasPrice = (await coordinator.getGasPriceRecommendation(provider)).standard
 
         Logger.info(
           `Token分发: ${task.toAddress} - ${formatTokenAmount(amount, tokenInfo.decimals)} ${tokenInfo.symbol} (${task.institutionGroup || '未知机构'})`,
@@ -290,8 +293,10 @@ async function executeTokenDistributionTasks(
 
 // 层级Token分发：分层执行Token分发
 async function executeHierarchicalTokenDistribution(
+  provider: Provider,
   tokenContract: Contract,
   sourceWallet: Wallet,
+  institutionTree: InstitutionNode[], // 添加机构树参数
   tokenConfig: TokenDistributionConfig,
   tokenInfo: { decimals: number; symbol: string },
   batchSize: number,
@@ -301,7 +306,7 @@ async function executeHierarchicalTokenDistribution(
   const baseTime = Date.now()
 
   // 1. 首先分发给所有主要机构（深度0）
-  const depthMap = getNodesByDepth(institutionTreeConfig)
+  const depthMap = getNodesByDepth(institutionTree) // 使用传入的机构树
   const mainInstitutions = depthMap.get(0) || []
   Logger.info(`\n=== 阶段1：分发给 ${mainInstitutions.length} 个主要机构 ===`)
 
@@ -348,7 +353,16 @@ async function executeHierarchicalTokenDistribution(
   }
 
   // 执行主机构分发
-  await executeTokenDistributionTasks(tokenContract, sourceWallet, mainTasks, tokenInfo, batchSize, maxRetries, dryRun)
+  await executeTokenDistributionTasks(
+    provider,
+    tokenContract,
+    sourceWallet,
+    mainTasks,
+    tokenInfo,
+    batchSize,
+    maxRetries,
+    dryRun,
+  )
 
   // 2. 然后按深度层级处理子机构分发
   const maxDepth = Math.max(...Array.from(depthMap.keys()))
@@ -430,6 +444,7 @@ async function executeHierarchicalTokenDistribution(
       // 对于中间层机构，需要从父机构的分发者钱包执行分发
       // 这里简化处理，假设我们有权限使用各机构的分发者钱包
       await executeTokenDistributionTasks(
+        provider,
         tokenContract,
         sourceWallet, // 实际应该是各父机构的分发者钱包
         depthTasks,
@@ -444,6 +459,7 @@ async function executeHierarchicalTokenDistribution(
 
 // 执行安全检查（小额测试）
 async function performSafetyCheck(
+  provider: Provider,
   tokenContract: Contract,
   sourceWallet: Wallet,
   testAddresses: string[],
@@ -456,7 +472,7 @@ async function performSafetyCheck(
   Logger.info(`对 ${testAddresses.length} 个地址执行小额测试，每个地址: ${formatTokenAmount(smallAmount, decimals)}`)
 
   for (const address of testAddresses) {
-    const gasPrice = generateRandomGasPrice(15, 30) // 使用较低的Gas价格进行测试
+    const gasPrice = (await coordinator.getGasPriceRecommendation(provider)).standard
 
     Logger.info(`小额测试: ${sourceWallet.address} -> ${address}`)
 

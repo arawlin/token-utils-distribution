@@ -1,19 +1,11 @@
-import { task } from 'hardhat/config'
-import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import type { Provider, Wallet } from 'ethers'
 import { ethers } from 'ethers'
-import type { Wallet, Provider } from 'ethers'
+import { existsSync, readFileSync } from 'fs'
+import { task } from 'hardhat/config'
+import { join } from 'path'
 import { DistributionSystemConfig, ObfuscationConfig } from '../types'
-import {
-  generateWalletFromPath,
-  generateRandomEthAmount,
-  generateRandomGasPrice,
-  formatEther,
-  delay,
-  Logger,
-  shuffleArray,
-} from './utils'
 import { coordinator } from './coordinator'
+import { delay, formatEther, generateRandomEthAmount, generateWalletFromPath, Logger, shuffleArray } from './utils'
 
 task('obfuscation', '抗检测干扰交易模块')
   .addOptionalParam('configDir', '配置目录', './.ws')
@@ -188,7 +180,7 @@ async function executeCircularTransaction(wallets: Wallet[], obfuscationConfig: 
     obfuscationConfig.randomTransfers.ethAmounts.max,
   )
 
-  const gasPrice = generateRandomGasPrice(15, 40)
+  const gasPrice = (await coordinator.getGasPriceRecommendation(provider)).standard
 
   Logger.info(`循环交易: ${fromWallet.address} -> ${toWallet.address} (${formatEther(amount)} ETH)`)
 
@@ -307,7 +299,7 @@ async function executeRandomTransfer(wallets: Wallet[], obfuscationConfig: Obfus
     obfuscationConfig.randomTransfers.ethAmounts.max,
   )
 
-  const gasPrice = generateRandomGasPrice(15, 40)
+  const gasPrice = (await coordinator.getGasPriceRecommendation(provider)).standard
 
   Logger.info(`随机转账: ${sourceWallet.address} -> ${targetAddress} (${formatEther(amount)} ETH)`)
 

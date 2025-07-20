@@ -1,5 +1,5 @@
 import { ethers } from 'ethers'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
 import { DistributionSystemConfig } from '../types'
@@ -12,6 +12,14 @@ const ERC20_ABI = [
   'function symbol() view returns (string)',
   'function name() view returns (string)',
 ]
+
+// 创建时间戳文件名
+function createTimestampFilename(prefix: string, extension: string = 'json'): string {
+  const now = new Date()
+  const date = now.toISOString().split('T')[0] // YYYY-MM-DD
+  const time = now.toTimeString().split(' ')[0].replace(/:/g, '-') // HH-MM-SS
+  return `${prefix}-${date}_${time}.${extension}`
+}
 
 interface WalletBalance {
   address: string
@@ -38,12 +46,15 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
   .addOptionalParam('tokenAddress', 'Token合约地址 (如不指定则从配置读取)', '')
   .addOptionalParam('concurrency', '并发查询数量', '10')
   .addOptionalParam('delayMs', '批次间延迟(毫秒)', '100')
+  .addOptionalParam('outputDir', '结果输出目录 (如不指定则使用configDir/balance-results)', '.ws')
   .addFlag('detailed', '显示详细的每个地址余额 (默认已开启)')
   .addFlag('sortByEth', '按ETH余额排序 (默认按Token余额排序)')
   .addFlag('summaryOnly', '只显示汇总信息，不显示详细地址列表')
   .addFlag('onlyNonZero', '只显示非零余额的地址')
+  .addFlag('noSave', '不保存结果到文件')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, tokenAddress, concurrency, delayMs, sortByEth, summaryOnly, onlyNonZero } = taskArgs
+    const { configDir, tokenAddress, concurrency, delayMs, outputDir, sortByEth, summaryOnly, onlyNonZero, noSave } =
+      taskArgs
 
     try {
       Logger.info('开始统计钱包余额')
@@ -264,6 +275,97 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
       }
 
       Logger.info('\n余额统计完成!')
+
+      // 保存结果到文件 (除非指定了 noSave)
+      if (!noSave) {
+        const resultDir = join(configDir, 'balance-results')
+        const resultFileName = createTimestampFilename('balance-report')
+        const resultFilePath = join(resultDir, resultFileName)
+
+        try {
+          // 确保目录存在
+          if (!existsSync(resultDir)) {
+            mkdirSync(resultDir, { recursive: true })
+          }
+
+          // 准备要保存的数据
+          const resultData = {
+            timestamp: new Date().toISOString(),
+            network: hre.network.name,
+            tokenInfo: {
+              address: finalTokenAddress,
+              name: tokenName,
+              symbol: tokenSymbol,
+              decimals: tokenDecimals,
+            },
+            summary: {
+              totalWallets: summary.totalWallets,
+              totalEthBalance: summary.totalEthBalance.toString(),
+              totalTokenBalance: summary.totalTokenBalance.toString(),
+              categories: Object.fromEntries(
+                Object.entries(summary.categories).map(([key, value]) => [
+                  key,
+                  {
+                    count: value.count,
+                    ethBalance: value.ethBalance.toString(),
+                    tokenBalance: value.tokenBalance.toString(),
+                  },
+                ]),
+              ),
+            },
+            specialStats: {
+              zeroEthWallets: balances.filter(b => b.ethBalance === 0n).length,
+              zeroTokenWallets: balances.filter(b => b.tokenBalance === 0n).length,
+              bothZeroWallets: balances.filter(b => b.ethBalance === 0n && b.tokenBalance === 0n).length,
+              bothNonZeroWallets: balances.filter(b => b.ethBalance > 0n && b.tokenBalance > 0n).length,
+            },
+            averages:
+              summary.totalWallets > 0
+                ? {
+                    avgEthBalance: (summary.totalEthBalance / BigInt(summary.totalWallets)).toString(),
+                    avgTokenBalance: (summary.totalTokenBalance / BigInt(summary.totalWallets)).toString(),
+                  }
+                : null,
+            detailedBalances: balances.map(balance => ({
+              address: balance.address,
+              ethBalance: balance.ethBalance.toString(),
+              tokenBalance: balance.tokenBalance.toString(),
+              category: balance.category,
+              ethBalanceFormatted: formatEther(balance.ethBalance),
+              tokenBalanceFormatted: ethers.formatUnits(balance.tokenBalance, tokenDecimals),
+            })),
+            queryConfig: {
+              concurrency: parseInt(concurrency),
+              delayMs: parseInt(delayMs),
+              onlyNonZero,
+              sortByEth,
+              configDir,
+              outputDir: resultDir,
+            },
+          }
+
+          // 写入文件
+          writeFileSync(
+            resultFilePath,
+            JSON.stringify(
+              resultData,
+              (key, value) => {
+                // 自定义序列化函数处理BigInt
+                return typeof value === 'bigint' ? value.toString() : value
+              },
+              2,
+            ),
+            'utf8',
+          )
+          Logger.info(`\n✅ 余额统计结果已保存到: ${resultFilePath}`)
+          Logger.info(`📁 结果目录: ${resultDir}`)
+          Logger.info(`📄 文件名: ${resultFileName}`)
+        } catch (error) {
+          Logger.warn('保存结果文件时出错:', error)
+        }
+      } else {
+        Logger.info('\n⏩ 跳过保存结果文件 (指定了 --noSave 参数)')
+      }
     } catch (error) {
       Logger.error('余额统计失败:', error)
       throw error

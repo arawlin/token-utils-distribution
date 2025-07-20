@@ -3,6 +3,7 @@ import './distribute-gas'
 import './distribute-tokens'
 import './init-hd-tree'
 import './manual-transfer'
+import './manual-transfer-token'
 import './obfuscation'
 
 // 导出类型供其他模块使用

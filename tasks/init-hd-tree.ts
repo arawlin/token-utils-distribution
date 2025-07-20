@@ -123,6 +123,8 @@ function sanitizeNodeForPublic(node: InstitutionNode): InstitutionNode {
     institutionName: node.institutionName,
     gasReceiveWindow: node.gasReceiveWindow,
     tokenReceiveWindow: node.tokenReceiveWindow,
+    retentionConfig: node.retentionConfig,
+    gasUsageConfig: node.gasUsageConfig,
   }
 }
 

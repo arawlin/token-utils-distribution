@@ -51,23 +51,24 @@ const tasks = [
       '2',
     ],
   },
-  {
-    name: 'obfuscation',
-    color: 'magenta',
-    args: [
-      'hardhat',
-      'obfuscation',
-      '--network',
-      'localhost',
-      '--dry-run',
-      '--duration',
-      '2',
-      '--intensity',
-      '0.5',
-      '--max-retries',
-      '2',
-    ],
-  },
+  // 屏蔽 obfuscation 任务
+  // {
+  //   name: 'obfuscation',
+  //   color: 'magenta',
+  //   args: [
+  //     'hardhat',
+  //     'obfuscation',
+  //     '--network',
+  //     'localhost',
+  //     '--dry-run',
+  //     '--duration',
+  //     '2',
+  //     '--intensity',
+  //     '0.5',
+  //     '--max-retries',
+  //     '2',
+  //   ],
+  // },
 ]
 
 // 执行单个任务

@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto'
 import type { Provider, Wallet } from 'ethers'
 import { ethers } from 'ethers'
 import { getInstitutionGroups } from '../config/institutions'
-import { DistributionSystemConfig, InstitutionNode } from '../types'
+import { DistributionSystemConfig, GasDistributionConfig, InstitutionNode } from '../types'
 
 // 生成正态分布随机数（Box-Muller变换）
 export function generateNormalDistribution(mean: number, stdDev: number): number {
@@ -92,6 +92,26 @@ export async function generateInstitutionAddresses(masterSeed: string, node: Ins
 // 生成安全的主种子
 export function generateMasterSeed(): string {
   return ethers.hexlify(randomBytes(32))
+}
+
+// 生成中间钱包地址和私钥
+export function generateIntermediateWallets(masterSeed: string, config: GasDistributionConfig): void {
+  const intermediateWallets = []
+
+  // 生成Gas分发中间钱包
+  const gasConfig = config.intermediateWallets
+  Logger.debug(`生成Gas分发中间钱包: ${gasConfig.count} 个`)
+
+  for (let i = 0; i < gasConfig.count; i++) {
+    const wallet = generateWalletFromPath(masterSeed, gasConfig.hdPath, i)
+    intermediateWallets.push({
+      address: wallet.address,
+      privateKey: wallet.privateKey,
+    })
+    Logger.debug(`Gas中间钱包 ${i}: ${wallet.address}`)
+  }
+
+  config.intermediateWallets.wallets = intermediateWallets
 }
 
 // 格式化ETH数量显示

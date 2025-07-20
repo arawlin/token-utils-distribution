@@ -39,7 +39,7 @@ export interface InstitutionGroup {
 // Gas 分发配置
 export interface GasDistributionConfig {
   exchangeSources: { address: string; privateKey: string }[] // 交易所热钱包
-  intermediateWallets: { hdPath: string; count: number } // 中间HD钱包
+  intermediateWallets: { hdPath: string; count: number; wallets?: { address: string; privateKey: string }[] } // 中间HD钱包
   gasAmounts: { min: string; max: string } // 每个地址分配的Gas范围(ETH)
   gasPriceRandomization: { min: number; max: number } // Gas Price随机范围(gwei)
 }

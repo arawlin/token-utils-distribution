@@ -4,7 +4,7 @@ import { join } from 'path'
 import { gasDistributionConfig, obfuscationConfig, tokenDistributionConfig } from '../config/distribution'
 import { institutionTreeConfig } from '../config/institutions'
 import { DistributionSystemConfig, InstitutionNode } from '../types'
-import { generateInstitutionAddresses, generateMasterSeed, Logger } from './utils'
+import { generateInstitutionAddresses, generateIntermediateWallets, generateMasterSeed, Logger } from './utils'
 
 task('init-hd-tree', '初始化HD钱包树结构')
   .addOptionalParam('outputDir', '输出目录', './.ws')
@@ -49,9 +49,16 @@ task('init-hd-tree', '初始化HD钱包树结构')
         totalAddresses += countAddressesInTree(rootNode)
       }
 
-      Logger.info(`总共生成了 ${totalAddresses} 个地址`)
+      Logger.info(`总共生成了 ${totalAddresses} 个机构地址`)
 
-      // 创建完整配置
+      // 生成中间钱包地址
+      Logger.info('生成中间钱包地址...')
+      generateIntermediateWallets(masterSeed, gasDistributionConfig)
+      Logger.info(`生成了 ${gasDistributionConfig.intermediateWallets.wallets?.length} 个中间钱包地址`)
+
+      Logger.info(`总共生成了 ${totalAddresses + gasDistributionConfig.intermediateWallets.wallets!.length} 个地址`)
+
+      // 创建完整配置（包含中间钱包）
       const config: DistributionSystemConfig = {
         masterSeed: masterSeed,
         institutionTree: institutionTree,
@@ -143,7 +150,8 @@ function displayTreeStatistics(tree: InstitutionNode[]) {
   analyzeTree(tree)
 
   Logger.info(`总机构节点数: ${totalNodes}`)
-  Logger.info(`总地址数: ${totalAddresses}`)
+  Logger.info(`总机构地址数: ${totalAddresses}`)
+
   Logger.info(`树的最大深度: ${Math.max(...Object.keys(depthCounts).map(Number))}`)
 
   Logger.info('\n各层级机构分布:')

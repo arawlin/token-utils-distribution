@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
 import { DistributionSystemConfig } from '../types'
-import { chunkArray, delay, determineWalletCategory, formatEther, loadAllWallets, Logger } from './utils'
+import { chunkArray, createTimestampFilename, delay, determineWalletCategory, formatEther, loadAllWallets, Logger } from './utils'
 
 // ERC20 Token ABI (只需要 balanceOf 方法)
 const ERC20_ABI = [
@@ -12,14 +12,6 @@ const ERC20_ABI = [
   'function symbol() view returns (string)',
   'function name() view returns (string)',
 ]
-
-// 创建时间戳文件名
-function createTimestampFilename(prefix: string, extension: string = 'json'): string {
-  const now = new Date()
-  const date = now.toISOString().split('T')[0] // YYYY-MM-DD
-  const time = now.toTimeString().split(' ')[0].replace(/:/g, '-') // HH-MM-SS
-  return `${prefix}-${date}_${time}.${extension}`
-}
 
 interface WalletBalance {
   address: string
@@ -219,9 +211,7 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
       Logger.info('\n=== 余额汇总统计 ===')
       Logger.info(`总钱包数: ${summary.totalWallets}`)
       Logger.info(`总ETH余额: ${formatEther(summary.totalEthBalance)} ETH`)
-      Logger.info(
-        `总${tokenSymbol}余额: ${ethers.formatUnits(summary.totalTokenBalance, tokenDecimals)} ${tokenSymbol}`,
-      )
+      Logger.info(`总${tokenSymbol}余额: ${ethers.formatUnits(summary.totalTokenBalance, tokenDecimals)} ${tokenSymbol}`)
 
       // 按类别显示统计
       Logger.info('\n=== 按类别统计 ===')
@@ -229,9 +219,7 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
         Logger.info(`${category}:`)
         Logger.info(`  钱包数: ${categoryData.count}`)
         Logger.info(`  ETH余额: ${formatEther(categoryData.ethBalance)} ETH`)
-        Logger.info(
-          `  ${tokenSymbol}余额: ${ethers.formatUnits(categoryData.tokenBalance, tokenDecimals)} ${tokenSymbol}`,
-        )
+        Logger.info(`  ${tokenSymbol}余额: ${ethers.formatUnits(categoryData.tokenBalance, tokenDecimals)} ${tokenSymbol}`)
       }
 
       // 显示详细余额 - 默认显示，除非指定了 summaryOnly

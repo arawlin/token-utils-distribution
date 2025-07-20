@@ -337,3 +337,11 @@ export function determineWalletCategory(address: string, config: DistributionSys
   // 默认归类为机构地址
   return '机构地址'
 }
+
+// 创建时间戳文件名
+export function createTimestampFilename(prefix: string, extension: string = 'json'): string {
+  const now = new Date()
+  const date = now.toISOString().split('T')[0] // YYYY-MM-DD
+  const time = now.toTimeString().split(' ')[0].replace(/:/g, '-') // HH-MM-SS
+  return `${prefix}-${date}_${time}.${extension}`
+}

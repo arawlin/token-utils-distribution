@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
 import { DistributionSystemConfig } from '../types'
-import { determineWalletCategory, formatEther, loadAllWallets, Logger } from './utils'
+import { chunkArray, delay, determineWalletCategory, formatEther, loadAllWallets, Logger } from './utils'
 
 // ERC20 Token ABI (只需要 balanceOf 方法)
 const ERC20_ABI = [
@@ -36,12 +36,14 @@ interface BalanceSummary {
 task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
   .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('tokenAddress', 'Token合约地址 (如不指定则从配置读取)', '')
+  .addOptionalParam('concurrency', '并发查询数量', '10')
+  .addOptionalParam('delayMs', '批次间延迟(毫秒)', '100')
   .addFlag('detailed', '显示详细的每个地址余额 (默认已开启)')
   .addFlag('sortByEth', '按ETH余额排序 (默认按Token余额排序)')
   .addFlag('summaryOnly', '只显示汇总信息，不显示详细地址列表')
   .addFlag('onlyNonZero', '只显示非零余额的地址')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, tokenAddress, sortByEth, summaryOnly, onlyNonZero } = taskArgs
+    const { configDir, tokenAddress, concurrency, delayMs, sortByEth, summaryOnly, onlyNonZero } = taskArgs
 
     try {
       Logger.info('开始统计钱包余额')
@@ -98,7 +100,9 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
       const allWallets = await loadAllWallets(masterSeed, config, provider)
       Logger.info(`总共加载了 ${allWallets.size} 个钱包地址`)
 
-      // 统计余额
+      Logger.info(`并发查询配置: ${concurrency} 个并发，批次间延迟 ${delayMs}ms`)
+
+      // 统计余额 - 使用并发查询
       Logger.info('开始统计余额...')
       const balances: WalletBalance[] = []
       const summary: BalanceSummary = {
@@ -108,64 +112,87 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
         categories: {},
       }
 
+      // 将钱包地址转换为数组并分批处理
+      const walletArray = Array.from(allWallets.values())
+      const batches = chunkArray(walletArray, parseInt(concurrency))
+
       let processedCount = 0
-      const totalCount = allWallets.size
+      const totalCount = walletArray.length
 
-      for (const [, wallet] of allWallets.entries()) {
-        processedCount++
+      Logger.info(`将 ${totalCount} 个地址分为 ${batches.length} 批处理`)
 
-        try {
-          // 获取ETH余额
-          const ethBalance = await provider.getBalance(wallet.address)
+      // 处理每一批
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex]
 
-          // 获取Token余额
-          let tokenBalance = 0n
+        Logger.info(`处理第 ${batchIndex + 1}/${batches.length} 批 (${batch.length} 个地址)`)
+
+        // 并发查询当前批次的所有地址
+        const batchPromises = batch.map(async wallet => {
           try {
-            tokenBalance = await tokenContract.balanceOf(wallet.address)
-          } catch (error) {
-            Logger.debug(`无法获取地址 ${wallet.address} 的Token余额:`, error)
-          }
+            // 并发获取ETH余额和Token余额
+            const [ethBalance, tokenBalance] = await Promise.all([
+              provider.getBalance(wallet.address),
+              tokenContract.balanceOf(wallet.address).catch(() => 0n),
+            ])
 
-          // 确定钱包类别
-          const category = determineWalletCategory(wallet.address, config)
+            // 确定钱包类别
+            const category = determineWalletCategory(wallet.address, config)
 
-          const walletBalance: WalletBalance = {
-            address: wallet.address,
-            ethBalance,
-            tokenBalance,
-            category,
-          }
-
-          // 应用过滤条件
-          if (onlyNonZero && ethBalance === 0n && tokenBalance === 0n) {
-            continue
-          }
-
-          balances.push(walletBalance)
-
-          // 更新统计
-          summary.totalEthBalance += ethBalance
-          summary.totalTokenBalance += tokenBalance
-          summary.totalWallets++
-
-          if (!summary.categories[category]) {
-            summary.categories[category] = {
-              count: 0,
-              ethBalance: 0n,
-              tokenBalance: 0n,
+            const walletBalance: WalletBalance = {
+              address: wallet.address,
+              ethBalance,
+              tokenBalance,
+              category,
             }
-          }
 
-          summary.categories[category].count++
-          summary.categories[category].ethBalance += ethBalance
-          summary.categories[category].tokenBalance += tokenBalance
+            // 应用过滤条件
+            if (onlyNonZero && ethBalance === 0n && tokenBalance === 0n) {
+              return null
+            }
 
-          // 显示进度
-          if (processedCount % 10 === 0 || processedCount === totalCount) {
-            Logger.info(`进度: ${processedCount}/${totalCount} (${((processedCount / totalCount) * 100).toFixed(1)}%)`)
+            return walletBalance
+          } catch (error) {
+            Logger.warn(`处理地址 ${wallet.address} 时出错:`, error)
+            return null
           }
-        } catch (error) {
-          Logger.warn(`处理地址 ${wallet.address} 时出错:`, error)
+        })
+
+        // 等待当前批次完成
+        const batchResults = await Promise.all(batchPromises)
+
+        // 处理结果并更新统计
+        for (const result of batchResults) {
+          if (result) {
+            balances.push(result)
+
+            // 更新统计
+            summary.totalEthBalance += result.ethBalance
+            summary.totalTokenBalance += result.tokenBalance
+            summary.totalWallets++
+
+            if (!summary.categories[result.category]) {
+              summary.categories[result.category] = {
+                count: 0,
+                ethBalance: 0n,
+                tokenBalance: 0n,
+              }
+            }
+
+            summary.categories[result.category].count++
+            summary.categories[result.category].ethBalance += result.ethBalance
+            summary.categories[result.category].tokenBalance += result.tokenBalance
+          }
+        }
+
+        processedCount += batch.length
+
+        // 显示进度
+        Logger.info(`进度: ${processedCount}/${totalCount} (${((processedCount / totalCount) * 100).toFixed(1)}%)`)
+
+        // 批次间延迟，避免过快请求
+        if (batchIndex < batches.length - 1) {
+          await delay(parseInt(delayMs))
         }
       }
 

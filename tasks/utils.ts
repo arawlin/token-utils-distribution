@@ -124,6 +124,48 @@ export function formatTokenAmount(amount: bigint, decimals: number = 18): string
   return ethers.formatUnits(amount, decimals)
 }
 
+// 生成随机Token数量（支持末尾零控制）
+export function generateRandomTokenAmount(
+  minAmount: string,
+  maxAmount: string,
+  decimals: number,
+  precision?: number,
+  trailingZeros?: number,
+): bigint {
+  const minNum = parseFloat(minAmount)
+  const maxNum = parseFloat(maxAmount)
+
+  if (minNum >= maxNum) {
+    throw new Error('最小金额必须小于最大金额')
+  }
+
+  // 生成基础随机数
+  let randomAmount = Math.random() * (maxNum - minNum) + minNum
+
+  // 应用精度设置
+  if (precision !== undefined && precision >= 0) {
+    const multiplier = Math.pow(10, precision)
+    randomAmount = Math.round(randomAmount * multiplier) / multiplier
+  }
+
+  // 转换为最小单位（考虑token的decimals）
+  let amountInMinUnits = Math.floor(randomAmount * Math.pow(10, decimals))
+
+  // 应用末尾零控制
+  if (trailingZeros !== undefined && trailingZeros > 0) {
+    const divisor = Math.pow(10, trailingZeros)
+    // 确保末尾至少有指定数量的零
+    amountInMinUnits = Math.floor(amountInMinUnits / divisor) * divisor
+
+    // 如果结果为0，至少保证一个有效的数值
+    if (amountInMinUnits === 0) {
+      amountInMinUnits = divisor
+    }
+  }
+
+  return BigInt(amountInMinUnits)
+}
+
 // 延迟执行
 export function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))

@@ -37,6 +37,122 @@ function analyzeTimeWindows(nodes: InstitutionNode[], type: 'gas' | 'token') {
   }
 }
 
+interface GasLimitConfig {
+  transferToken: {
+    baseGas: number // 基础转账 gas
+    erc20Logic: number // ERC20 transfer 逻辑 gas
+    total: number // 总 gas limit
+    estimatedCost: string // 预估费用 (ETH)
+  }
+  swapToken: {
+    baseGas: number // 基础转账 gas
+    swapLogic: number // swap 逻辑 gas
+    total: number // 总 gas limit
+    estimatedCost: string // 预估费用 (ETH)
+  }
+}
+
+function calculateGasLimits(gasPriceGwei: number = 10): GasLimitConfig {
+  const transferTokenGasLimit = 21000 + 50000 // 使用上限 50000
+  const swapTokenGasLimit = 21000 + 200000
+
+  const gasPriceWei = gasPriceGwei * 1e9 // 转换为 wei
+
+  const transferCost = (transferTokenGasLimit * gasPriceWei) / 1e18
+  const swapCost = (swapTokenGasLimit * gasPriceWei) / 1e18
+
+  return {
+    transferToken: {
+      baseGas: 21000,
+      erc20Logic: 50000,
+      total: transferTokenGasLimit,
+      estimatedCost: transferCost.toFixed(6),
+    },
+    swapToken: {
+      baseGas: 21000,
+      swapLogic: 200000,
+      total: swapTokenGasLimit,
+      estimatedCost: swapCost.toFixed(6),
+    },
+  }
+}
+
+function analyzeGasRequirements(nodes: InstitutionNode[]): {
+  totalTransferOperations: number
+  totalSwapOperations: number
+  totalGasRequired: {
+    transferGas: string // ETH
+    swapGas: string // ETH
+    total: string // ETH
+  }
+  gasLimitConfig: GasLimitConfig
+  addressBreakdown: {
+    distributorAddresses: number
+    holderAddresses: number
+    totalSwapAddresses: number
+  }
+} {
+  const allNodes = getAllNodes(nodes)
+
+  // 计算转账操作数量（所有非叶子节点向子节点转账）
+  let transferOperations = 0
+  allNodes.forEach(node => {
+    if (node.childNodes.length > 0) {
+      // 非叶子节点需要向子节点转账
+      transferOperations += node.childNodes.reduce((sum, child) => sum + child.addressCount, 0)
+    }
+  })
+
+  // 计算所有需要进行swap操作的地址数量
+  let totalSwapAddresses = 0
+  let distributorCount = 0
+  let holderCount = 0
+
+  allNodes.forEach(node => {
+    if (node.retentionConfig) {
+      // 分发地址（需要进行token转账操作，但不一定swap）
+      if (node.retentionConfig.distributorAddressIndex >= 0) {
+        distributorCount++
+      }
+
+      // Holder addresses（持有token的地址，通常需要swap）
+      holderCount += node.retentionConfig.holderAddressIndices.length
+
+      // 根据gasUsageConfig判断哪些地址需要进行swap
+      if (node.gasUsageConfig) {
+        if (node.gasUsageConfig.isEndUser) {
+          // 最终用户：所有地址都可能进行swap
+          totalSwapAddresses += node.addressCount
+        } else {
+          // 非最终用户：只有holder addresses进行swap
+          totalSwapAddresses += node.retentionConfig.holderAddressIndices.length
+        }
+      }
+    }
+  })
+
+  const gasLimits = calculateGasLimits(10) // 使用 10 gwei gas price
+
+  const totalTransferGas = transferOperations * parseFloat(gasLimits.transferToken.estimatedCost)
+  const totalSwapGas = totalSwapAddresses * parseFloat(gasLimits.swapToken.estimatedCost)
+
+  return {
+    totalTransferOperations: transferOperations,
+    totalSwapOperations: totalSwapAddresses,
+    totalGasRequired: {
+      transferGas: totalTransferGas.toFixed(6),
+      swapGas: totalSwapGas.toFixed(6),
+      total: (totalTransferGas + totalSwapGas).toFixed(6),
+    },
+    gasLimitConfig: gasLimits,
+    addressBreakdown: {
+      distributorAddresses: distributorCount,
+      holderAddresses: holderCount,
+      totalSwapAddresses,
+    },
+  }
+}
+
 function showInstitutionTree(nodes: InstitutionNode[], prefix = '') {
   nodes.forEach((node, index) => {
     const isLast = index === nodes.length - 1
@@ -96,6 +212,32 @@ function showDetailedAnalysis() {
     console.log(`   Token分发总时长: ${tokenAnalysis.totalDuration.toFixed(1)} 分钟`)
     console.log(`   参与Token接收的机构: ${tokenAnalysis.windowCount}`)
   }
+
+  // Gas 需求分析
+  const gasRequirements = analyzeGasRequirements(config)
+  console.log('\n⛽ Gas 需求分析:')
+  console.log(`   Token转账操作数量: ${gasRequirements.totalTransferOperations}`)
+  console.log(`   Token交换操作数量: ${gasRequirements.totalSwapOperations}`)
+  console.log('\n   📊 地址分解:')
+  console.log(`   分发地址 (Distributor): ${gasRequirements.addressBreakdown.distributorAddresses}`)
+  console.log(`   持有地址 (Holder): ${gasRequirements.addressBreakdown.holderAddresses}`)
+  console.log(`   需要Swap的地址总数: ${gasRequirements.addressBreakdown.totalSwapAddresses}`)
+
+  console.log('\n   Gas Limit 配置:')
+  console.log(`   📤 Token转账 Gas Limit: ${gasRequirements.gasLimitConfig.transferToken.total.toLocaleString()} gas`)
+  console.log(`      - 基础转账: ${gasRequirements.gasLimitConfig.transferToken.baseGas.toLocaleString()} gas`)
+  console.log(`      - ERC20逻辑: ${gasRequirements.gasLimitConfig.transferToken.erc20Logic.toLocaleString()} gas`)
+  console.log(`      - 单次费用 (10 gwei): ${gasRequirements.gasLimitConfig.transferToken.estimatedCost} ETH`)
+
+  console.log(`   🔄 Token交换 Gas Limit: ${gasRequirements.gasLimitConfig.swapToken.total.toLocaleString()} gas`)
+  console.log(`      - 基础转账: ${gasRequirements.gasLimitConfig.swapToken.baseGas.toLocaleString()} gas`)
+  console.log(`      - 交换逻辑: ${gasRequirements.gasLimitConfig.swapToken.swapLogic.toLocaleString()} gas`)
+  console.log(`      - 单次费用 (10 gwei): ${gasRequirements.gasLimitConfig.swapToken.estimatedCost} ETH`)
+
+  console.log('\n   💰 总 Gas 费用预估 (10 gwei):')
+  console.log(`   所有转账操作: ${gasRequirements.totalGasRequired.transferGas} ETH`)
+  console.log(`   所有交换操作: ${gasRequirements.totalGasRequired.swapGas} ETH`)
+  console.log(`   📊 总计: ${gasRequirements.totalGasRequired.total} ETH`)
 
   // 按深度统计
   console.log('\n🌳 按深度统计:')

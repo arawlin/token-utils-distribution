@@ -8,7 +8,8 @@
     "lint:sol": "solhint 'contracts/**/*.sol'",
     "lint:sol:fix": "solhint 'contracts/**/*.sol' --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "config:info": "npx ts-node scripts/show-config-info.ts"
   },
   "keywords": [],
   "author": "arawlin",

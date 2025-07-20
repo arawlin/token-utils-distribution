@@ -140,17 +140,25 @@ export function getAllNodes(nodes: InstitutionNode[]): InstitutionNode[] {
 export function getNodesByDepth(nodes: InstitutionNode[]): Map<number, InstitutionNode[]> {
   const depthMap = new Map<number, InstitutionNode[]>()
 
-  function traverse(node: InstitutionNode) {
-    const depth = node.depth
-    if (!depthMap.has(depth)) {
-      depthMap.set(depth, [])
+  function traverse(node: InstitutionNode, currentDepth: number = 0) {
+    // 使用计算的深度而不是节点的depth属性，确保准确性
+    if (!depthMap.has(currentDepth)) {
+      depthMap.set(currentDepth, [])
     }
-    depthMap.get(depth)!.push(node)
+    depthMap.get(currentDepth)!.push(node)
 
-    node.childNodes.forEach(traverse)
+    // 验证节点的depth属性是否与计算的深度一致
+    if (node.depth !== currentDepth) {
+      console.warn(
+        `Warning: Node ${node.institutionName} has depth=${node.depth} but calculated depth=${currentDepth}. Using calculated depth.`,
+      )
+    }
+
+    // 递归处理子节点，深度+1
+    node.childNodes.forEach(child => traverse(child, currentDepth + 1))
   }
 
-  nodes.forEach(traverse)
+  nodes.forEach(node => traverse(node, 0))
   return depthMap
 }
 

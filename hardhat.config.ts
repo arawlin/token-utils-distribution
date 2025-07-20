@@ -1,7 +1,7 @@
-import { HardhatUserConfig } from 'hardhat/config'
 import '@nomicfoundation/hardhat-toolbox'
-import 'hardhat-deploy'
 import 'dotenv/config'
+import 'hardhat-deploy'
+import { HardhatUserConfig } from 'hardhat/config'
 
 import './tasks'
 
@@ -40,7 +40,7 @@ const config: HardhatUserConfig = {
       chainId: 1337,
       mining: {
         auto: true,
-        interval: 5000,
+        interval: 1000,
       },
       ...networkSettings,
     },

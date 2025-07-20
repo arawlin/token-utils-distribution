@@ -13,7 +13,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
     depth: 0,
     addressCount: 3, // 1个分发地址 + 2个持有地址
     institutionName: '主要机构A',
-    gasReceiveWindow: { start: 0, end: 1 }, // 0-1分钟
+    gasReceiveWindow: { start: 0, end: 0.1 }, // 0-0.1分钟
     tokenReceiveWindow: { start: 2, end: 3 }, // 2-3分钟
     retentionConfig: {
       percentage: 40, // 保留40%的token

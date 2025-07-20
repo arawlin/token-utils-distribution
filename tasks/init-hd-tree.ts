@@ -8,10 +8,10 @@ import { generateInstitutionAddresses, generateMasterSeed, Logger } from './util
 
 task('init-hd-tree', '初始化HD钱包树结构')
   .addOptionalParam('outputDir', '输出目录', './.ws')
-  .addFlag('force', '强制重新生成（覆盖已有文件）')
+  // .addFlag('force', '强制重新生成（覆盖已有文件）')
   .addFlag('dryRun', '干运行模式（不执行实际操作）')
   .setAction(async (taskArgs, hre) => {
-    const { outputDir, force, dryRun } = taskArgs
+    const { outputDir, dryRun } = taskArgs
 
     Logger.info('开始初始化HD钱包树结构')
     Logger.info(`网络: ${hre.network.name}`)
@@ -27,8 +27,8 @@ task('init-hd-tree', '初始化HD钱包树结构')
     const seedPath = join(outputDir, 'master-seed.json')
 
     // 检查文件是否已存在
-    if (!force && (existsSync(configPath) || existsSync(seedPath))) {
-      Logger.warn('配置文件已存在，使用 --force 标志强制重新生成')
+    if (existsSync(configPath) || existsSync(seedPath)) {
+      Logger.warn('配置文件已存在')
       return
     }
 

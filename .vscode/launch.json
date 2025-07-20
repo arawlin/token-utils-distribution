@@ -36,8 +36,7 @@
         "--max-retries",
         "3",
         "--delay-ms",
-        "3000",
-        "--force"
+        "3000"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",

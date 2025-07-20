@@ -1,0 +1,244 @@
+import { ethers } from 'ethers'
+import { existsSync, readFileSync } from 'fs'
+import { task } from 'hardhat/config'
+import { join } from 'path'
+import { DistributionSystemConfig } from '../types'
+import { determineWalletCategory, formatEther, loadAllWallets, Logger } from './utils'
+
+// ERC20 Token ABI (只需要 balanceOf 方法)
+const ERC20_ABI = [
+  'function balanceOf(address owner) view returns (uint256)',
+  'function decimals() view returns (uint8)',
+  'function symbol() view returns (string)',
+  'function name() view returns (string)',
+]
+
+interface WalletBalance {
+  address: string
+  ethBalance: bigint
+  tokenBalance: bigint
+  category: string
+}
+
+interface BalanceSummary {
+  totalWallets: number
+  totalEthBalance: bigint
+  totalTokenBalance: bigint
+  categories: {
+    [key: string]: {
+      count: number
+      ethBalance: bigint
+      tokenBalance: bigint
+    }
+  }
+}
+
+task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
+  .addOptionalParam('configDir', '配置目录', './.ws')
+  .addOptionalParam('tokenAddress', 'Token合约地址 (如不指定则从配置读取)', '')
+  .addFlag('detailed', '显示详细的每个地址余额 (默认已开启)')
+  .addFlag('sortByEth', '按ETH余额排序 (默认按Token余额排序)')
+  .addFlag('summaryOnly', '只显示汇总信息，不显示详细地址列表')
+  .addFlag('onlyNonZero', '只显示非零余额的地址')
+  .setAction(async (taskArgs, hre) => {
+    const { configDir, tokenAddress, sortByEth, summaryOnly, onlyNonZero } = taskArgs
+
+    try {
+      Logger.info('开始统计钱包余额')
+      Logger.info(`网络: ${hre.network.name}`)
+
+      const configPath = join(configDir, 'distribution-config.json')
+      const seedPath = join(configDir, 'master-seed.json')
+
+      // 检查配置文件
+      if (!existsSync(configPath) || !existsSync(seedPath)) {
+        Logger.error('配置文件不存在，请先运行 init-hd-tree 任务')
+        return
+      }
+
+      const provider = hre.ethers.provider
+
+      // 加载配置
+      const seedConfig = JSON.parse(readFileSync(seedPath, 'utf8'))
+      const masterSeed = seedConfig.masterSeed
+      const config: DistributionSystemConfig = JSON.parse(readFileSync(configPath, 'utf8'))
+
+      // 确定Token地址
+      const finalTokenAddress = tokenAddress || config.tokenDistribution?.tokenAddress
+      if (!finalTokenAddress) {
+        Logger.error('未指定Token地址，请在参数中指定或确保配置文件中包含Token地址')
+        return
+      }
+
+      // 验证Token地址
+      if (!ethers.isAddress(finalTokenAddress)) {
+        Logger.error(`无效的Token地址: ${finalTokenAddress}`)
+        return
+      }
+
+      Logger.info(`Token合约地址: ${finalTokenAddress}`)
+
+      // 获取Token信息
+      const tokenContract = new ethers.Contract(finalTokenAddress, ERC20_ABI, provider)
+      let tokenSymbol = 'TOKEN'
+      let tokenDecimals = 18
+      let tokenName = 'Unknown Token'
+
+      try {
+        tokenSymbol = await tokenContract.symbol()
+        tokenDecimals = await tokenContract.decimals()
+        tokenName = await tokenContract.name()
+        Logger.info(`Token信息: ${tokenName} (${tokenSymbol}), ${tokenDecimals} decimals`)
+      } catch {
+        Logger.warn('无法获取Token信息，使用默认值')
+      }
+
+      // 加载所有钱包
+      Logger.info('加载所有钱包地址...')
+      const allWallets = await loadAllWallets(masterSeed, config, provider)
+      Logger.info(`总共加载了 ${allWallets.size} 个钱包地址`)
+
+      // 统计余额
+      Logger.info('开始统计余额...')
+      const balances: WalletBalance[] = []
+      const summary: BalanceSummary = {
+        totalWallets: 0,
+        totalEthBalance: 0n,
+        totalTokenBalance: 0n,
+        categories: {},
+      }
+
+      let processedCount = 0
+      const totalCount = allWallets.size
+
+      for (const [, wallet] of allWallets.entries()) {
+        processedCount++
+
+        try {
+          // 获取ETH余额
+          const ethBalance = await provider.getBalance(wallet.address)
+
+          // 获取Token余额
+          let tokenBalance = 0n
+          try {
+            tokenBalance = await tokenContract.balanceOf(wallet.address)
+          } catch (error) {
+            Logger.debug(`无法获取地址 ${wallet.address} 的Token余额:`, error)
+          }
+
+          // 确定钱包类别
+          const category = determineWalletCategory(wallet.address, config)
+
+          const walletBalance: WalletBalance = {
+            address: wallet.address,
+            ethBalance,
+            tokenBalance,
+            category,
+          }
+
+          // 应用过滤条件
+          if (onlyNonZero && ethBalance === 0n && tokenBalance === 0n) {
+            continue
+          }
+
+          balances.push(walletBalance)
+
+          // 更新统计
+          summary.totalEthBalance += ethBalance
+          summary.totalTokenBalance += tokenBalance
+          summary.totalWallets++
+
+          if (!summary.categories[category]) {
+            summary.categories[category] = {
+              count: 0,
+              ethBalance: 0n,
+              tokenBalance: 0n,
+            }
+          }
+
+          summary.categories[category].count++
+          summary.categories[category].ethBalance += ethBalance
+          summary.categories[category].tokenBalance += tokenBalance
+
+          // 显示进度
+          if (processedCount % 10 === 0 || processedCount === totalCount) {
+            Logger.info(`进度: ${processedCount}/${totalCount} (${((processedCount / totalCount) * 100).toFixed(1)}%)`)
+          }
+        } catch (error) {
+          Logger.warn(`处理地址 ${wallet.address} 时出错:`, error)
+        }
+      }
+
+      // 排序 - 默认按Token余额降序排列
+      if (sortByEth) {
+        balances.sort((a, b) => (a.ethBalance > b.ethBalance ? -1 : 1))
+        Logger.info('按ETH余额降序排序')
+      } else {
+        // 默认或明确指定按Token排序
+        balances.sort((a, b) => (a.tokenBalance > b.tokenBalance ? -1 : 1))
+        Logger.info('按Token余额降序排序')
+      }
+
+      // 显示汇总统计
+      Logger.info('\n=== 余额汇总统计 ===')
+      Logger.info(`总钱包数: ${summary.totalWallets}`)
+      Logger.info(`总ETH余额: ${formatEther(summary.totalEthBalance)} ETH`)
+      Logger.info(
+        `总${tokenSymbol}余额: ${ethers.formatUnits(summary.totalTokenBalance, tokenDecimals)} ${tokenSymbol}`,
+      )
+
+      // 按类别显示统计
+      Logger.info('\n=== 按类别统计 ===')
+      for (const [category, categoryData] of Object.entries(summary.categories)) {
+        Logger.info(`${category}:`)
+        Logger.info(`  钱包数: ${categoryData.count}`)
+        Logger.info(`  ETH余额: ${formatEther(categoryData.ethBalance)} ETH`)
+        Logger.info(
+          `  ${tokenSymbol}余额: ${ethers.formatUnits(categoryData.tokenBalance, tokenDecimals)} ${tokenSymbol}`,
+        )
+      }
+
+      // 显示详细余额 - 默认显示，除非指定了 summaryOnly
+      if (!summaryOnly && balances.length > 0) {
+        Logger.info('\n=== 所有地址详细余额信息 (按Token余额降序) ===')
+
+        balances.forEach((balance, index) => {
+          const ethAmount = formatEther(balance.ethBalance)
+          const tokenAmount = ethers.formatUnits(balance.tokenBalance, tokenDecimals)
+          const indexStr = `${(index + 1).toString().padStart(3)}. `
+
+          // 格式：序号. 地址 | ETH: 数量 | TOKEN: 数量 | 类别
+          Logger.info(
+            `${indexStr}${balance.address} | ETH: ${ethAmount.padStart(12)} | ${tokenSymbol}: ${tokenAmount.padStart(15)} | ${balance.category}`,
+          )
+        })
+
+        Logger.info(`\n共显示 ${balances.length} 个地址`)
+      }
+
+      // 显示特殊统计
+      Logger.info('\n=== 特殊统计 ===')
+      const zeroEthWallets = balances.filter(b => b.ethBalance === 0n)
+      const zeroTokenWallets = balances.filter(b => b.tokenBalance === 0n)
+      const bothZeroWallets = balances.filter(b => b.ethBalance === 0n && b.tokenBalance === 0n)
+      const bothNonZeroWallets = balances.filter(b => b.ethBalance > 0n && b.tokenBalance > 0n)
+
+      Logger.info(`ETH余额为0的钱包: ${zeroEthWallets.length}`)
+      Logger.info(`${tokenSymbol}余额为0的钱包: ${zeroTokenWallets.length}`)
+      Logger.info(`ETH和${tokenSymbol}都为0的钱包: ${bothZeroWallets.length}`)
+      Logger.info(`ETH和${tokenSymbol}都不为0的钱包: ${bothNonZeroWallets.length}`)
+
+      // 计算平均值
+      if (summary.totalWallets > 0) {
+        const avgEth = summary.totalEthBalance / BigInt(summary.totalWallets)
+        const avgToken = summary.totalTokenBalance / BigInt(summary.totalWallets)
+        Logger.info(`平均ETH余额: ${formatEther(avgEth)} ETH`)
+        Logger.info(`平均${tokenSymbol}余额: ${ethers.formatUnits(avgToken, tokenDecimals)} ${tokenSymbol}`)
+      }
+
+      Logger.info('\n余额统计完成!')
+    } catch (error) {
+      Logger.error('余额统计失败:', error)
+      throw error
+    }
+  })

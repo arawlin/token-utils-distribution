@@ -286,3 +286,32 @@ export async function loadAllWallets(
 
   return wallets
 }
+
+// 确定钱包类别
+export function determineWalletCategory(address: string, config: DistributionSystemConfig): string {
+  const lowerAddress = address.toLowerCase()
+
+  // 检查是否是交易所钱包
+  if (config.gasDistribution?.exchangeSources) {
+    for (const source of config.gasDistribution.exchangeSources) {
+      if (source.address.toLowerCase() === lowerAddress) {
+        return 'Gas交易所钱包'
+      }
+    }
+  }
+
+  // 检查是否是Token源钱包
+  if (config.tokenDistribution?.sourceAddress?.address.toLowerCase() === lowerAddress) {
+    return 'Token源钱包'
+  }
+
+  // 检查是否是Gas分发中间钱包
+  // 通过HD路径特征来判断
+  if (config.gasDistribution?.intermediateWallets?.hdPath) {
+    // 可以通过重新生成地址来精确匹配，但这里使用简化逻辑
+    // 如果需要更精确的分类，可以在这里添加地址重新生成和匹配的逻辑
+  }
+
+  // 默认归类为机构地址
+  return '机构地址'
+}

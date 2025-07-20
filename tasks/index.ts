@@ -5,6 +5,7 @@ import './init-hd-tree'
 import './manual-transfer'
 import './manual-transfer-token'
 import './obfuscation'
+import './wallet-balance'
 
 // 导出类型供其他模块使用
 export * from '../types'

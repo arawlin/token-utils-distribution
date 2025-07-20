@@ -3,17 +3,16 @@ import { ethers } from 'ethers'
 import { existsSync, readFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
-import { getAllLeafNodes, getInstitutionGroups } from '../config/institutions'
-import { DistributionSystemConfig, InstitutionGroup, TokenDistributionConfig } from '../types'
-import { coordinator } from './coordinator'
 import {
-  chunkArray,
-  delay,
-  formatTokenAmount,
-  generateNormalDistributionAmount,
-  generateRandomGasPrice,
-  Logger,
-} from './utils'
+  calculateDistributionAmounts,
+  getDistributorAddresses,
+  getHolderAddresses,
+  getNodesByDepth,
+  institutionTreeConfig,
+} from '../config/institutions'
+import { DistributionSystemConfig, DistributionTask, TokenDistributionConfig } from '../types'
+import { coordinator } from './coordinator'
+import { chunkArray, delay, formatTokenAmount, generateRandomGasPrice, Logger } from './utils'
 
 // ERC20 Token ABI (简化版，只包含需要的方法)
 const ERC20_ABI = [
@@ -70,14 +69,13 @@ task('distribute-tokens', 'Token分发任务')
       Logger.info('初始化Token合约和源钱包...')
       const { tokenContract, sourceWallet, tokenInfo } = await initializeTokenContract(provider, tokenConfig)
 
-      // 获取所有叶子节点（最终接收者）- 使用机构分组
+      // 获取所有机构节点
       Logger.info('收集Token分发目标...')
-      const leafNodes = getAllLeafNodes(config.institutionTree)
-      const institutionGroups = getInstitutionGroups(leafNodes)
-      const totalTargetAddresses = institutionGroups.reduce((sum, group) => sum + group.addresses.length, 0)
+      const allNodes = Array.from(getNodesByDepth(institutionTreeConfig).values()).flat()
+      const totalTargetAddresses = allNodes.reduce((sum, node) => sum + node.addressCount, 0)
 
       Logger.info(`需要分发Token的地址总数: ${totalTargetAddresses}`)
-      Logger.info(`机构组数: ${institutionGroups.length}`)
+      Logger.info(`机构节点数: ${allNodes.length}`)
       Logger.info(`Token信息: ${tokenInfo.symbol} (小数位: ${tokenInfo.decimals})`)
 
       // 验证源钱包Token余额和计算总量
@@ -100,7 +98,11 @@ task('distribute-tokens', 'Token分发任务')
       // 执行安全检查（小额测试）- 使用前几个机构组的地址
       if (!skipSafetyCheck) {
         Logger.info('\n=== 执行安全检查 ===')
-        const testAddresses = institutionGroups.slice(0, 2).flatMap(group => group.addresses.slice(0, 2))
+        // 使用主机构的一些地址进行安全检查
+        const mainInstitutions = getNodesByDepth(institutionTreeConfig).get(0) || []
+        const testAddresses = mainInstitutions
+          .slice(0, 2)
+          .flatMap(institution => (institution.addresses || []).slice(0, 2))
         await performSafetyCheck(
           tokenContract,
           sourceWallet,
@@ -116,12 +118,11 @@ task('distribute-tokens', 'Token分发任务')
         }
       }
 
-      // 执行主要分发 - 按机构分组
-      Logger.info('\n=== 执行主要Token分发 ===')
-      await executeInstitutionBasedTokenDistribution(
+      // 执行主要分发 - 层级分发
+      Logger.info('\n=== 执行层级Token分发 ===')
+      await executeHierarchicalTokenDistribution(
         tokenContract,
         sourceWallet,
-        institutionGroups,
         tokenConfig, // 传递token配置
         tokenInfo,
         parseInt(batchSize),
@@ -168,10 +169,129 @@ async function initializeTokenContract(provider: Provider, tokenConfig: TokenDis
 }
 
 // 按机构分组执行Token分发
-async function executeInstitutionBasedTokenDistribution(
+// Token分发任务执行器
+async function executeTokenDistributionTasks(
   tokenContract: Contract,
   sourceWallet: Wallet,
-  institutionGroups: InstitutionGroup[],
+  tasks: DistributionTask[],
+  tokenInfo: { decimals: number; symbol: string },
+  batchSize: number,
+  maxRetries: number,
+  dryRun: boolean,
+) {
+  if (tasks.length === 0) return
+
+  // 按时间排序任务
+  tasks.sort((a, b) => a.scheduledTime - b.scheduledTime)
+
+  Logger.info(`执行 ${tasks.length} 个Token分发任务`)
+
+  let totalCompleted = 0
+  let totalFailed = 0
+
+  // 分批执行任务
+  const batches = chunkArray(tasks, batchSize)
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const batch = batches[batchIndex]
+
+    Logger.info(`执行第 ${batchIndex + 1}/${batches.length} 批Token分发 (${batch.length} 个)`)
+
+    // 等待到第一个任务的计划时间
+    const firstTaskTime = Math.min(...batch.map(t => t.scheduledTime))
+    const currentTime = Date.now()
+
+    if (currentTime < firstTaskTime) {
+      const waitTime = firstTaskTime - currentTime
+      Logger.info(`等待 ${Math.round(waitTime / 1000)} 秒直到批次开始时间...`)
+      if (!dryRun) {
+        await delay(waitTime)
+      }
+    }
+
+    // 并行执行批次内的任务
+    const promises = batch.map(async task => {
+      try {
+        // 等待到任务的具体计划时间
+        const currentTime = Date.now()
+        if (currentTime < task.scheduledTime) {
+          const waitTime = task.scheduledTime - currentTime
+          if (!dryRun && waitTime > 0) {
+            await delay(waitTime)
+          }
+        }
+
+        const amount = BigInt(task.amount)
+        const gasPrice = generateRandomGasPrice(20, 60)
+
+        Logger.info(
+          `Token分发: ${task.toAddress} - ${formatTokenAmount(amount, tokenInfo.decimals)} ${tokenInfo.symbol} (${task.institutionGroup || '未知机构'})`,
+        )
+
+        if (!dryRun) {
+          await coordinator.smartRetry(
+            async () => {
+              // 获取nonce并验证余额
+              const provider = sourceWallet.provider!
+              const nonce = await coordinator.getNextNonce(sourceWallet.address, provider)
+
+              // 检查Token余额
+              const tokenBalance = await tokenContract.balanceOf(sourceWallet.address)
+              if (tokenBalance < amount) {
+                throw new Error(
+                  `Token余额不足: 需要 ${formatTokenAmount(amount, tokenInfo.decimals)}, 拥有 ${formatTokenAmount(tokenBalance, tokenInfo.decimals)}`,
+                )
+              }
+
+              const tx = await tokenContract.transfer(task.toAddress, amount, {
+                gasPrice: gasPrice,
+                nonce: nonce,
+              })
+
+              const receipt = await tx.wait()
+
+              if (receipt.status === 1) {
+                Logger.info(`✅ Token分发成功: ${task.toAddress} (${tx.hash})`)
+                return receipt
+              } else {
+                throw new Error(`Token分发交易失败: ${tx.hash}`)
+              }
+            },
+            { maxRetries },
+          )
+          totalCompleted++
+        } else {
+          totalCompleted++
+          Logger.info(`[DRY-RUN] ✅ Token分发: ${task.toAddress}`)
+        }
+      } catch (error) {
+        totalFailed++
+        Logger.error(`❌ Token分发失败: ${task.toAddress}`, error)
+      }
+
+      // 随机延迟避免被检测
+      const randomDelay = Math.random() * 3000 + 1000 // 1-4秒随机延迟
+      await delay(randomDelay)
+    })
+
+    await Promise.all(promises)
+
+    Logger.info(`批次 ${batchIndex + 1} 完成: ${totalCompleted - totalFailed} 成功`)
+
+    // 批次间短暂暂停
+    if (batchIndex < batches.length - 1 && !dryRun) {
+      await delay(2000)
+    }
+  }
+
+  // 输出统计
+  Logger.info(`Token分发任务完成: ${totalCompleted} 成功, ${totalFailed} 失败`)
+}
+
+// 层级Token分发：分层执行Token分发
+async function executeHierarchicalTokenDistribution(
+  tokenContract: Contract,
+  sourceWallet: Wallet,
   tokenConfig: TokenDistributionConfig,
   tokenInfo: { decimals: number; symbol: string },
   batchSize: number,
@@ -180,172 +300,145 @@ async function executeInstitutionBasedTokenDistribution(
 ) {
   const baseTime = Date.now()
 
-  // 为每个机构组生成Token分发任务，考虑它们的token接收窗口
-  const allTasks: Array<{
-    group: InstitutionGroup
-    address: string
-    scheduledTime: number
-    amount: string
-    dependsOnGas: boolean
-  }> = []
+  // 1. 首先分发给所有主要机构（深度0）
+  const depthMap = getNodesByDepth(institutionTreeConfig)
+  const mainInstitutions = depthMap.get(0) || []
+  Logger.info(`\n=== 阶段1：分发给 ${mainInstitutions.length} 个主要机构 ===`)
 
-  for (const group of institutionGroups) {
-    const tokenWindow = group.tokenReceiveWindow
-    const gasWindow = group.gasReceiveWindow
+  // 使用配置中的均值作为总量
+  const totalTokensToDistribute = BigInt(tokenConfig.distributionPlan.amounts.mean)
 
-    // Token分发应该在Gas分发完成后进行
-    const gasCompletionTime = baseTime + gasWindow.end * 60 * 1000 // Gas窗口结束时间
-    const tokenStartTime = Math.max(gasCompletionTime + 5 * 60 * 1000, baseTime + tokenWindow.start * 60 * 1000) // 至少等5分钟
-    const tokenEndTime = baseTime + tokenWindow.end * 60 * 1000
+  // 计算各主机构应得的token数量
+  const mainInstitutionAmounts = calculateDistributionAmounts(mainInstitutions, totalTokensToDistribute)
 
-    const windowDurationMs = tokenEndTime - tokenStartTime
+  const mainTasks: DistributionTask[] = []
 
-    for (let i = 0; i < group.addresses.length; i++) {
-      const address = group.addresses[i]
+  for (const institution of mainInstitutions) {
+    const amounts = mainInstitutionAmounts.get(institution.hdPath)
+    if (!amounts) continue
 
-      // 在token窗口内随机分布时间
-      const randomOffset = Math.random() * windowDurationMs * 0.8
-      const clusterOffset = i * ((windowDurationMs * 0.2) / group.addresses.length)
-      const scheduledTime = tokenStartTime + randomOffset + clusterOffset
+    // 为主机构生成分发时间（在窗口内分散）
+    const window = institution.tokenReceiveWindow || { start: 0, end: 30 } // 默认30分钟窗口
+    const windowStartMs = baseTime + window.start * 60 * 1000
+    const windowEndMs = baseTime + window.end * 60 * 1000
+    const scheduledTime = windowStartMs + Math.random() * (windowEndMs - windowStartMs)
 
-      // 生成正态分布的Token数量 - 使用配置参数
-      const amount = generateNormalDistributionAmount(
-        tokenConfig.distributionPlan.amounts.mean,
-        tokenConfig.distributionPlan.amounts.stdDev,
-      )
+    // 获取分发者地址（用于从源钱包分发）
+    const distributorAddresses = getDistributorAddresses([institution])
+    const targetAddress = distributorAddresses.get(institution.hdPath)
 
-      allTasks.push({
-        group,
-        address,
-        scheduledTime,
-        amount: amount.toString(),
-        dependsOnGas: true,
-      })
+    if (!targetAddress) {
+      Logger.warn(`机构 ${institution.institutionName} 没有分发者地址`)
+      continue
     }
+
+    mainTasks.push({
+      id: `main-${institution.institutionName}-${Date.now()}`,
+      type: 'token',
+      subType: 'hierarchical-token',
+      fromAddress: sourceWallet.address,
+      toAddress: targetAddress,
+      scheduledTime,
+      amount: amounts.receive.toString(),
+      status: 'pending',
+      institutionGroup: institution.institutionName,
+      hierarchyLevel: 0,
+      retentionAmount: amounts.retain.toString(),
+    })
   }
 
-  // 按时间排序任务
-  allTasks.sort((a, b) => a.scheduledTime - b.scheduledTime)
+  // 执行主机构分发
+  await executeTokenDistributionTasks(tokenContract, sourceWallet, mainTasks, tokenInfo, batchSize, maxRetries, dryRun)
 
-  Logger.info(`创建了 ${allTasks.length} 个Token分发任务，按 ${institutionGroups.length} 个机构分组`)
+  // 2. 然后按深度层级处理子机构分发
+  const maxDepth = Math.max(...Array.from(depthMap.keys()))
 
-  // 按机构分组执行任务
-  const institutionNames = [...new Set(allTasks.map(t => t.group.institutionName))]
-  let totalCompleted = 0
-  let totalFailed = 0
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const nodesAtDepth = depthMap.get(depth) || []
 
-  for (const institutionName of institutionNames) {
-    const institutionTasks = allTasks.filter(t => t.group.institutionName === institutionName)
+    if (nodesAtDepth.length === 0) continue
 
-    Logger.info(`\n=== 开始处理 ${institutionName} Token分发 (${institutionTasks.length} 个地址) ===`)
+    Logger.info(`\n=== 阶段${depth + 1}：深度${depth}的分发 (${nodesAtDepth.length} 个机构) ===`)
 
-    // 等待到第一个任务的计划时间
-    const firstTaskTime = Math.min(...institutionTasks.map(t => t.scheduledTime))
-    const currentTime = Date.now()
+    const depthTasks: DistributionTask[] = []
 
-    if (currentTime < firstTaskTime) {
-      const waitTime = firstTaskTime - currentTime
-      Logger.info(`等待 ${Math.round(waitTime / 1000)} 秒直到 ${institutionName} 的Token分发窗口...`)
-      if (!dryRun) {
-        await delay(waitTime)
-      }
-    }
+    for (const institution of nodesAtDepth) {
+      // 计算该机构应当收到的token数量（来自父机构的分发）
+      const amounts = mainInstitutionAmounts.get(institution.hdPath)
+      if (!amounts) continue
 
-    // 分批执行该机构的任务
-    const batches = chunkArray(institutionTasks, batchSize)
+      // 获取分发目标地址
+      if (institution.childNodes.length === 0) {
+        // 最终用户：分发给所有持有者地址
+        const holderAddresses = getHolderAddresses([institution])
+        const holderAddressList = holderAddresses.get(institution.hdPath) || []
+        const amountPerAddress = amounts.receive / BigInt(holderAddressList.length)
 
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      const batch = batches[batchIndex]
+        for (const targetAddress of holderAddressList) {
+          const window = institution.tokenReceiveWindow || { start: 0, end: 30 }
+          const windowStartMs = baseTime + window.start * 60 * 1000 + depth * 10 * 60 * 1000 // 每层延迟10分钟
+          const windowEndMs = baseTime + window.end * 60 * 1000 + depth * 10 * 60 * 1000
+          const scheduledTime = windowStartMs + Math.random() * (windowEndMs - windowStartMs)
 
-      Logger.info(`执行 ${institutionName} 第 ${batchIndex + 1}/${batches.length} 批Token分发 (${batch.length} 个)`)
+          depthTasks.push({
+            id: `end-user-${institution.institutionName}-${targetAddress}-${Date.now()}`,
+            type: 'token',
+            subType: 'hierarchical-token',
+            fromAddress: sourceWallet.address, // 实际应该是父机构的分发者地址
+            toAddress: targetAddress,
+            scheduledTime,
+            amount: amountPerAddress.toString(),
+            status: 'pending',
+            institutionGroup: institution.institutionName,
+            dependsOn: [],
+            hierarchyLevel: depth,
+          })
+        }
+      } else {
+        // 中间机构：分发给分发者地址
+        const distributorAddresses = getDistributorAddresses([institution])
+        const targetAddress = distributorAddresses.get(institution.hdPath)
 
-      // 并行执行批次内的任务
-      const promises = batch.map(async task => {
-        const amount = BigInt(task.amount)
-        const gasPrice = generateRandomGasPrice(20, 60)
-
-        Logger.info(`Token分发: ${task.address} - ${formatTokenAmount(amount, tokenInfo.decimals)} ${tokenInfo.symbol}`)
-
-        if (!dryRun) {
-          try {
-            await coordinator.smartRetry(
-              async () => {
-                // 获取nonce并验证余额
-                const provider = sourceWallet.provider!
-                const nonce = await coordinator.getNextNonce(sourceWallet.address, provider)
-
-                // 检查Token余额
-                const tokenBalance = await tokenContract.balanceOf(sourceWallet.address)
-                if (tokenBalance < amount) {
-                  throw new Error(
-                    `Token余额不足: 需要 ${formatTokenAmount(amount, tokenInfo.decimals)}, 拥有 ${formatTokenAmount(tokenBalance, tokenInfo.decimals)}`,
-                  )
-                }
-
-                const tx = await tokenContract.transfer(task.address, amount, {
-                  gasPrice: gasPrice,
-                  nonce: nonce,
-                })
-
-                const receipt = await tx.wait()
-
-                if (receipt.status === 1) {
-                  totalCompleted++
-                  Logger.info(`✅ Token分发成功: ${task.address} (${tx.hash})`)
-                  return receipt
-                } else {
-                  throw new Error(`Token分发交易失败: ${tx.hash}`)
-                }
-              },
-              { maxRetries },
-            )
-          } catch (error) {
-            totalFailed++
-            Logger.error(`❌ Token分发失败: ${task.address}`, error)
-          }
-        } else {
-          totalCompleted++
-          Logger.info(`[DRY-RUN] ✅ Token分发: ${task.address}`)
+        if (!targetAddress) {
+          Logger.warn(`机构 ${institution.institutionName} 没有分发者地址`)
+          continue
         }
 
-        // 随机延迟避免被检测
-        const randomDelay = Math.random() * 3000 + 1000 // 1-4秒随机延迟
-        await delay(randomDelay)
-      })
+        const window = institution.tokenReceiveWindow || { start: 0, end: 30 }
+        const windowStartMs = baseTime + window.start * 60 * 1000 + depth * 10 * 60 * 1000
+        const windowEndMs = baseTime + window.end * 60 * 1000 + depth * 10 * 60 * 1000
+        const scheduledTime = windowStartMs + Math.random() * (windowEndMs - windowStartMs)
 
-      await Promise.all(promises)
-
-      Logger.info(`${institutionName} 批次 ${batchIndex + 1} 完成`)
-
-      // 批次间较短延迟（同一机构内）
-      if (batchIndex < batches.length - 1) {
-        const shortDelay = Math.random() * 5000 + 3000 // 3-8秒随机延迟
-        await delay(shortDelay)
+        depthTasks.push({
+          id: `mid-${institution.institutionName}-${Date.now()}`,
+          type: 'token',
+          subType: 'hierarchical-token',
+          fromAddress: sourceWallet.address, // 实际应该是父机构的分发者地址
+          toAddress: targetAddress,
+          scheduledTime,
+          amount: amounts.receive.toString(),
+          status: 'pending',
+          institutionGroup: institution.institutionName,
+          hierarchyLevel: depth,
+          retentionAmount: amounts.retain.toString(),
+        })
       }
     }
 
-    Logger.info(`${institutionName} Token分发完成`)
-
-    // 机构间较长延迟
-    const currentInstitutionIndex = institutionNames.indexOf(institutionName)
-    if (currentInstitutionIndex < institutionNames.length - 1) {
-      const longDelay = Math.random() * 60000 + 30000 // 30-90秒随机延迟
-      Logger.info(`等待 ${Math.round(longDelay / 1000)} 秒后处理下一个机构的Token分发...`)
-      if (!dryRun) {
-        await delay(longDelay)
-      }
+    // 执行这一层的分发任务
+    if (depthTasks.length > 0) {
+      // 对于中间层机构，需要从父机构的分发者钱包执行分发
+      // 这里简化处理，假设我们有权限使用各机构的分发者钱包
+      await executeTokenDistributionTasks(
+        tokenContract,
+        sourceWallet, // 实际应该是各父机构的分发者钱包
+        depthTasks,
+        tokenInfo,
+        batchSize,
+        maxRetries,
+        dryRun,
+      )
     }
-  }
-
-  // 输出最终统计
-  Logger.info(`\n=== Token分发统计 ===`)
-  Logger.info(`总任务数: ${allTasks.length}`)
-  Logger.info(`成功: ${totalCompleted}`)
-  Logger.info(`失败: ${totalFailed}`)
-  Logger.info(`成功率: ${((totalCompleted / allTasks.length) * 100).toFixed(2)}%`)
-
-  if (totalFailed > 0) {
-    Logger.info('\n失败的任务详情将在日志中查看')
   }
 }
 

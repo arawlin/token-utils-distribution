@@ -11,6 +11,20 @@ export interface InstitutionNode {
   institutionName?: string // 机构名称
   gasReceiveWindow?: { start: number; end: number } // Gas费接收时间窗口(相对时间，分钟)
   tokenReceiveWindow?: { start: number; end: number } // Token接收时间窗口(相对时间，分钟)
+
+  // 新增：层级分发配置
+  retentionConfig?: {
+    percentage: number // 该机构保留的token百分比（0-100）
+    distributorAddressIndex: number // 用于分发的地址索引
+    holderAddressIndices: number[] // 用于持有token的地址索引
+  }
+
+  // 新增：Gas用途配置
+  gasUsageConfig?: {
+    distributionGasAmount: string // 用于分发token的gas数量(ETH)
+    tradingGasAmount: string // 用于交易的gas数量(ETH)
+    isEndUser: boolean // 是否为最终用户（需要交易gas）
+  }
 }
 
 // 按机构分组地址信息
@@ -66,6 +80,7 @@ export interface ObfuscationConfig {
 export interface DistributionTask {
   id: string
   type: 'gas' | 'token'
+  subType?: 'distribution-gas' | 'trading-gas' | 'hierarchical-token' // 新增：任务子类型
   fromAddress: string
   toAddress: string
   amount: string
@@ -75,6 +90,8 @@ export interface DistributionTask {
   error?: string
   institutionGroup?: string // 所属机构组
   dependsOn?: string[] // 依赖的任务ID（如token转账依赖gas转账完成）
+  hierarchyLevel?: number // 层级等级（用于token分发）
+  retentionAmount?: string // 该机构保留的token数量
 }
 
 // 分发进度

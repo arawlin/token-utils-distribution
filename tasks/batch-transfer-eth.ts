@@ -26,6 +26,9 @@ interface TransferPlan {
   amountWei: bigint
 }
 
+// transfer token: `21000 + 约 25000~50000 ≈ 45000~70000 gas. 70000 * 10 * 1e9 / 1e18 = 0.0007`
+// swap token: `21000 + 200000 = 221000. 221000 * 10 * 1e9 / 1e18 = 0.00221`
+
 task('batch-transfer-eth', '批量转账ETH到多个地址')
   .addOptionalParam('configDir', '配置目录', './.ws')
   .addParam('from', '发送地址')

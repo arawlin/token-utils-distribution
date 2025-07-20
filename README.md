@@ -92,6 +92,11 @@ interface GasDistributionConfig {
 }
 ```
 
+gas price: 10gwei
+
+transfer token: `21000（基础转账） + 约 25000~50000（ERC20 transfer 逻辑） ≈ 45000~70000 gas. 70000 * 10 * 1e9 / 1e18 = 0.0007`
+swap token: `21000 + 200000 = 221000. 221000 * 10 * 1e9 / 1e18 = 0.00221`
+
 ### Token 分发配置
 
 ```typescript

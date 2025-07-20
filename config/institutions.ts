@@ -1,131 +1,84 @@
 import { InstitutionGroup, InstitutionNode } from '../types'
 
-// 默认机构树配置
-// 模拟真实的投资者分发树形结构
+// 测试用机构树配置
+// 总地址数约20个，最大深度3，5分钟内完成所有操作
 export const institutionTreeConfig: InstitutionNode[] = [
   {
-    hdPath: "m/44'/60'/0'/0", // 主要机构A
+    hdPath: "m/44'/60'/0'/0", // 测试机构A
     depth: 0,
     addressCount: 1,
-    institutionName: '主要机构A',
-    gasReceiveWindow: { start: 0, end: 30 }, // 0-30分钟内接收gas
-    tokenReceiveWindow: { start: 45, end: 75 }, // 45-75分钟内接收token
+    institutionName: '测试机构A',
+    gasReceiveWindow: { start: 0, end: 1 }, // 0-1分钟内接收gas
+    tokenReceiveWindow: { start: 2.5, end: 3.5 }, // 2.5-3.5分钟内接收token
     childNodes: [
       {
         hdPath: "m/44'/60'/0'/0'/0", // A的子机构A1
         depth: 1,
-        addressCount: 4,
-        institutionName: '子机构A1',
-        gasReceiveWindow: { start: 5, end: 35 }, // 与父机构略有重叠
-        tokenReceiveWindow: { start: 50, end: 80 },
+        addressCount: 2,
+        institutionName: '测试子机构A1',
+        gasReceiveWindow: { start: 0.2, end: 1.2 },
+        tokenReceiveWindow: { start: 2.7, end: 3.7 },
         childNodes: [
           {
             hdPath: "m/44'/60'/0'/0'/0'/0", // A1的子机构A1a
             depth: 2,
-            addressCount: 12,
-            institutionName: '子机构A1a',
-            gasReceiveWindow: { start: 10, end: 40 },
-            tokenReceiveWindow: { start: 55, end: 85 },
-            childNodes: [],
-          },
-          {
-            hdPath: "m/44'/60'/0'/0'/0'/1", // A1的子机构A1b
-            depth: 2,
-            addressCount: 15,
-            institutionName: '子机构A1b',
-            gasReceiveWindow: { start: 15, end: 45 },
-            tokenReceiveWindow: { start: 60, end: 90 },
-            childNodes: [],
-          },
-        ],
-      },
-      {
-        hdPath: "m/44'/60'/0'/0'/1", // A的子机构A2
-        depth: 1,
-        addressCount: 6,
-        institutionName: '子机构A2',
-        gasReceiveWindow: { start: 20, end: 50 },
-        tokenReceiveWindow: { start: 65, end: 95 },
-        childNodes: [
-          {
-            hdPath: "m/44'/60'/0'/0'/1'/0", // A2的子机构A2a
-            depth: 2,
-            addressCount: 7,
-            institutionName: '子机构A2a',
-            gasReceiveWindow: { start: 25, end: 55 },
-            tokenReceiveWindow: { start: 70, end: 100 },
-            childNodes: [],
-          },
-        ],
-      },
-    ],
-  },
-  {
-    hdPath: "m/44'/60'/0'/1", // 主要机构B
-    depth: 0,
-    addressCount: 1,
-    institutionName: '主要机构B',
-    gasReceiveWindow: { start: 90, end: 120 }, // 与机构A有较大时间间隔
-    tokenReceiveWindow: { start: 135, end: 165 },
-    childNodes: [
-      {
-        hdPath: "m/44'/60'/0'/1'/0", // B的子机构B1
-        depth: 1,
-        addressCount: 7,
-        institutionName: '子机构B1',
-        gasReceiveWindow: { start: 95, end: 125 },
-        tokenReceiveWindow: { start: 140, end: 170 },
-        childNodes: [
-          {
-            hdPath: "m/44'/60'/0'/1'/0'/0", // B1的子机构B1a
-            depth: 2,
-            addressCount: 18,
-            institutionName: '子机构B1a',
-            gasReceiveWindow: { start: 100, end: 130 },
-            tokenReceiveWindow: { start: 145, end: 175 },
-            childNodes: [],
-          },
-        ],
-      },
-      {
-        hdPath: "m/44'/60'/0'/1'/1", // B的子机构B2
-        depth: 1,
-        addressCount: 1,
-        institutionName: '子机构B2',
-        gasReceiveWindow: { start: 105, end: 135 },
-        tokenReceiveWindow: { start: 150, end: 180 },
-        childNodes: [
-          {
-            hdPath: "m/44'/60'/0'/1'/1'/0", // B1的子机构B2a
-            depth: 2,
-            addressCount: 5,
-            institutionName: '子机构B2a',
-            gasReceiveWindow: { start: 110, end: 140 },
-            tokenReceiveWindow: { start: 155, end: 185 },
+            addressCount: 4,
+            institutionName: '测试子机构A1a',
+            gasReceiveWindow: { start: 0.4, end: 1.4 },
+            tokenReceiveWindow: { start: 2.9, end: 3.9 },
             childNodes: [
               {
-                hdPath: "m/44'/60'/0'/1'/1'/0'/0", // B1的子机构B2a1
+                hdPath: "m/44'/60'/0'/0'/0'/0'/0", // A1a的子机构A1a1
                 depth: 3,
-                addressCount: 10,
-                institutionName: '子机构B2a1',
-                gasReceiveWindow: { start: 115, end: 145 },
-                tokenReceiveWindow: { start: 160, end: 190 },
+                addressCount: 3,
+                institutionName: '测试子机构A1a1',
+                gasReceiveWindow: { start: 0.6, end: 1.6 },
+                tokenReceiveWindow: { start: 3.1, end: 4.1 },
                 childNodes: [],
               },
             ],
           },
+          {
+            hdPath: "m/44'/60'/0'/0'/0'/1", // A1的子机构A1b
+            depth: 2,
+            addressCount: 3,
+            institutionName: '测试子机构A1b',
+            gasReceiveWindow: { start: 0.8, end: 1.8 },
+            tokenReceiveWindow: { start: 3.3, end: 4.3 },
+            childNodes: [],
+          },
         ],
       },
     ],
   },
   {
-    hdPath: "m/44'/60'/0'/2", // 独立小机构C
+    hdPath: "m/44'/60'/0'/1", // 测试机构B
     depth: 0,
-    addressCount: 2,
-    institutionName: '独立小机构C',
-    gasReceiveWindow: { start: 200, end: 230 }, // 独立时间窗口
-    tokenReceiveWindow: { start: 245, end: 275 },
-    childNodes: [],
+    addressCount: 1,
+    institutionName: '测试机构B',
+    gasReceiveWindow: { start: 1.5, end: 2.5 }, // 与机构A略有时间间隔
+    tokenReceiveWindow: { start: 4, end: 5 },
+    childNodes: [
+      {
+        hdPath: "m/44'/60'/0'/1'/0", // B的子机构B1
+        depth: 1,
+        addressCount: 2,
+        institutionName: '测试子机构B1',
+        gasReceiveWindow: { start: 1.7, end: 2.7 },
+        tokenReceiveWindow: { start: 4.2, end: 5.2 },
+        childNodes: [
+          {
+            hdPath: "m/44'/60'/0'/1'/0'/0", // B1的子机构B1a
+            depth: 2,
+            addressCount: 4,
+            institutionName: '测试子机构B1a',
+            gasReceiveWindow: { start: 1.9, end: 2.9 },
+            tokenReceiveWindow: { start: 4.4, end: 5.4 },
+            childNodes: [],
+          },
+        ],
+      },
+    ],
   },
 ]
 
@@ -239,4 +192,38 @@ export function generateInstitutionBasedTasks(
   }
 
   return tasks.sort((a, b) => a.scheduledTime - b.scheduledTime)
+}
+
+// 获取配置信息
+export function getConfigInfo(config: InstitutionNode[]): {
+  totalAddresses: number
+  maxDepth: number
+  estimatedDurationMinutes: number
+  institutionCount: number
+} {
+  const totalAddresses = getTotalAddressCount(config)
+
+  let maxDepth = 0
+  let maxTokenTime = 0
+  let institutionCount = 0
+
+  function traverse(node: InstitutionNode) {
+    maxDepth = Math.max(maxDepth, node.depth)
+    institutionCount++
+
+    if (node.tokenReceiveWindow) {
+      maxTokenTime = Math.max(maxTokenTime, node.tokenReceiveWindow.end)
+    }
+
+    node.childNodes.forEach(traverse)
+  }
+
+  config.forEach(traverse)
+
+  return {
+    totalAddresses,
+    maxDepth,
+    estimatedDurationMinutes: Math.ceil(maxTokenTime + 0.5), // 加0.5分钟缓冲
+    institutionCount,
+  }
 }

@@ -1,6 +1,8 @@
 import { randomBytes } from 'crypto'
+import type { Provider, Wallet } from 'ethers'
 import { ethers } from 'ethers'
-import { InstitutionNode } from '../types'
+import { getInstitutionGroups } from '../config/institutions'
+import { DistributionSystemConfig, InstitutionNode } from '../types'
 
 // 生成正态分布随机数（Box-Muller变换）
 export function generateNormalDistribution(mean: number, stdDev: number): number {
@@ -211,4 +213,76 @@ export class Logger {
     const levels = ['debug', 'info', 'warn', 'error']
     return levels.indexOf(level) >= levels.indexOf(this.logLevel)
   }
+}
+
+// 加载所有钱包地址
+export async function loadAllWallets(
+  masterSeed: string,
+  config: DistributionSystemConfig,
+  provider: Provider,
+): Promise<Map<string, Wallet>> {
+  const wallets = new Map<string, Wallet>()
+
+  // 1. 加载中间钱包
+  Logger.info('加载中间钱包...')
+  const gasConfig = config.gasDistribution
+  const tokenConfig = config.tokenDistribution
+
+  // Gas分发中间钱包
+  if (gasConfig?.intermediateWallets) {
+    for (let i = 0; i < gasConfig.intermediateWallets.count; i++) {
+      const wallet = generateWalletFromPath(masterSeed, gasConfig.intermediateWallets.hdPath, i).connect(provider)
+
+      wallets.set(wallet.address.toLowerCase(), wallet)
+      Logger.debug(`Gas中间钱包 ${i}: ${wallet.address}`)
+    }
+  }
+
+  // Token分发中间钱包 - 注意：TokenDistributionConfig可能没有intermediateWallets字段
+  // 这里我们暂时跳过，因为类型定义中没有这个字段
+
+  // 2. 加载所有机构地址
+  Logger.info('加载机构地址...')
+  const institutionGroups = getInstitutionGroups(config.institutionTree)
+
+  for (const group of institutionGroups) {
+    Logger.debug(`加载机构: ${group.institutionName} (${group.addresses.length} 个地址)`)
+
+    for (let i = 0; i < group.addresses.length; i++) {
+      const wallet = generateWalletFromPath(masterSeed, group.hdPath, i).connect(provider)
+
+      wallets.set(wallet.address.toLowerCase(), wallet)
+      Logger.debug(`  ${group.institutionName}[${i}]: ${wallet.address}`)
+    }
+  }
+
+  // 3. 加载交易所钱包（如果配置中有私钥）
+  Logger.info('加载交易所钱包...')
+  if (gasConfig?.exchangeSources) {
+    for (const source of gasConfig.exchangeSources) {
+      if (source.privateKey) {
+        try {
+          const wallet = new ethers.Wallet(source.privateKey, provider)
+          wallets.set(wallet.address.toLowerCase(), wallet)
+          Logger.debug(`交易所钱包: ${wallet.address}`)
+        } catch {
+          Logger.warn(`无效的交易所私钥: ${source.address}`)
+        }
+      }
+    }
+  }
+
+  // Token交易所钱包 - 注意：TokenDistributionConfig可能没有exchangeSources字段
+  // 检查tokenConfig.sourceAddress
+  if (tokenConfig?.sourceAddress?.privateKey) {
+    try {
+      const wallet = new ethers.Wallet(tokenConfig.sourceAddress.privateKey, provider)
+      wallets.set(wallet.address.toLowerCase(), wallet)
+      Logger.debug(`Token源钱包: ${wallet.address}`)
+    } catch {
+      Logger.warn(`无效的Token源钱包私钥: ${tokenConfig.sourceAddress.address}`)
+    }
+  }
+
+  return wallets
 }

@@ -326,10 +326,12 @@ export function determineWalletCategory(address: string, config: DistributionSys
   }
 
   // 检查是否是Gas分发中间钱包
-  // 通过HD路径特征来判断
-  if (config.gasDistribution?.intermediateWallets?.hdPath) {
-    // 可以通过重新生成地址来精确匹配，但这里使用简化逻辑
-    // 如果需要更精确的分类，可以在这里添加地址重新生成和匹配的逻辑
+  if (config.gasDistribution?.intermediateWallets?.wallets) {
+    for (const wallet of config.gasDistribution.intermediateWallets.wallets) {
+      if (wallet.address.toLowerCase() === lowerAddress) {
+        return 'Gas中间钱包'
+      }
+    }
   }
 
   // 默认归类为机构地址

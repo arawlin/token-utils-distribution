@@ -46,15 +46,13 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
   .addOptionalParam('tokenAddress', 'Token合约地址 (如不指定则从配置读取)', '')
   .addOptionalParam('concurrency', '并发查询数量', '10')
   .addOptionalParam('delayMs', '批次间延迟(毫秒)', '100')
-  .addOptionalParam('outputDir', '结果输出目录 (如不指定则使用configDir/balance-results)', '.ws')
   .addFlag('detailed', '显示详细的每个地址余额 (默认已开启)')
   .addFlag('sortByEth', '按ETH余额排序 (默认按Token余额排序)')
   .addFlag('summaryOnly', '只显示汇总信息，不显示详细地址列表')
   .addFlag('onlyNonZero', '只显示非零余额的地址')
   .addFlag('noSave', '不保存结果到文件')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, tokenAddress, concurrency, delayMs, outputDir, sortByEth, summaryOnly, onlyNonZero, noSave } =
-      taskArgs
+    const { configDir, tokenAddress, concurrency, delayMs, sortByEth, summaryOnly, onlyNonZero, noSave } = taskArgs
 
     try {
       Logger.info('开始统计钱包余额')

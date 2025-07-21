@@ -161,7 +161,7 @@ export function generateRandomTokenAmount(
   }
 
   // 转换为最小单位（考虑token的decimals）
-  return BigInt(Math.floor(randomAmount * Math.pow(10, decimals)))
+  return ethers.parseEther(randomAmount + '')
 }
 
 // 延迟执行

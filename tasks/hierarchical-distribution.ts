@@ -347,87 +347,155 @@ async function executeHierarchicalDistribution(
     results: [],
   }
 
-  for (let i = 0; i < distributionPlan.length; i++) {
-    const plan = distributionPlan[i]
-    Logger.info(`\n🔄 执行层级 ${plan.level}: ${plan.institutionName}`)
+  // 按层级分组执行分发计划（相同层级并发执行）
+  const levelGroups = new Map<number, HierarchicalDistributionPlan[]>()
 
-    try {
-      // 构建 batch-transfer-token 任务参数
-      const taskParams = {
-        configDir: batchTransferOptions.configDir,
-        tokenAddress: batchTransferOptions.tokenAddress,
-        from: plan.fromAddress,
-        tos: plan.toAddresses.join(','),
-        holdRatio: plan.holdRatio,
-        trailingZeros: batchTransferOptions.trailingZeros,
-        delayMin: batchTransferOptions.delayMin,
-        delayMax: batchTransferOptions.delayMax,
-        autoFundGas: batchTransferOptions.autoFundGas,
-        ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
-        ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
-      }
+  // 按层级分组
+  distributionPlan.forEach(plan => {
+    if (!levelGroups.has(plan.level)) {
+      levelGroups.set(plan.level, [])
+    }
+    levelGroups.get(plan.level)!.push(plan)
+  })
 
-      Logger.info(`执行任务: batch-transfer-token`)
-      Logger.info(`参数: ${JSON.stringify(taskParams, null, 2)}`)
+  const sortedLevels = Array.from(levelGroups.keys()).sort((a, b) => a - b)
+  Logger.info(`📊 分发层级分组: ${sortedLevels.map(level => `Level ${level} (${levelGroups.get(level)!.length}个任务)`).join(', ')}`)
 
-      // 构造等效的命令行参数用于手动调试
-      const cliArgs = [
-        'npx hardhat batch-transfer-token',
-        `--config-dir "${taskParams.configDir}"`,
-        `--token-address "${taskParams.tokenAddress}"`,
-        `--from "${taskParams.from}"`,
-        `--tos "${taskParams.tos}"`,
-        `--hold-ratio "${taskParams.holdRatio}"`,
-        `--trailing-zeros "${taskParams.trailingZeros}"`,
-        `--delay-min "${taskParams.delayMin}"`,
-        `--delay-max "${taskParams.delayMax}"`,
-        `--auto-fund-gas "${taskParams.autoFundGas}"`,
-        `--network ${hre.network.name}`,
-      ]
+  for (let levelIndex = 0; levelIndex < sortedLevels.length; levelIndex++) {
+    const currentLevel = sortedLevels[levelIndex]
+    const plansInLevel = levelGroups.get(currentLevel)!
 
-      // 添加可选参数到CLI
-      if (taskParams.precision) {
-        cliArgs.push(`--precision "${taskParams.precision}"`)
-      }
-      if (taskParams.gasPrice) {
-        cliArgs.push(`--gas-price "${taskParams.gasPrice}"`)
-      }
+    Logger.info(`\n� 开始执行层级 ${currentLevel} (${plansInLevel.length} 个并发任务)`)
 
-      Logger.info(`📋 等效命令行参数 (可手动执行调试):`)
-      Logger.info(`${cliArgs.join(' \\\n  ')}`)
-
-      // 直接运行 Hardhat 任务
-      await hre.run('batch-transfer-token', taskParams)
-
-      Logger.info(`✅ 层级 ${plan.level} 分发成功`)
-      results.completedLevels++
-      results.results.push({
-        level: plan.level,
-        institutionName: plan.institutionName,
-        fromAddress: plan.fromAddress,
-        toAddressesCount: plan.toAddresses.length,
-        success: true,
-        actualAmount: plan.estimatedAmount,
-      })
-
-      // 层级间延迟
-      if (i < distributionPlan.length - 1) {
-        const delay = Math.random() * (levelDelayOptions.delayMax - levelDelayOptions.delayMin) + levelDelayOptions.delayMin
-        Logger.info(`⏱️  等待 ${Math.round(delay / 1000)}s 后执行下一层级...`)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    } catch (error) {
-      Logger.error(`❌ 层级 ${plan.level} 分发失败:`, error)
-      results.success = false
-      results.results.push({
-        level: plan.level,
-        institutionName: plan.institutionName,
-        fromAddress: plan.fromAddress,
-        toAddressesCount: plan.toAddresses.length,
+    // 创建所有任务的 Promise 数组
+    const levelTasks = plansInLevel.map(async (plan, planIndex) => {
+      const taskResult = {
+        plan,
+        planIndex,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      break // 如果某个层级失败，停止后续分发
+        error: undefined as string | undefined,
+      }
+
+      try {
+        // 构建 batch-transfer-token 任务参数
+        const taskParams = {
+          configDir: batchTransferOptions.configDir,
+          tokenAddress: batchTransferOptions.tokenAddress,
+          from: plan.fromAddress,
+          tos: plan.toAddresses.join(','),
+          holdRatio: plan.holdRatio,
+          trailingZeros: batchTransferOptions.trailingZeros,
+          delayMin: batchTransferOptions.delayMin,
+          delayMax: batchTransferOptions.delayMax,
+          autoFundGas: batchTransferOptions.autoFundGas,
+          ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
+          ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
+        }
+
+        Logger.info(`\n🔄 [层级${currentLevel}-任务${planIndex + 1}] ${plan.institutionName}`)
+        Logger.info(`参数: ${JSON.stringify(taskParams, null, 2)}`)
+
+        // 构造等效的命令行参数用于手动调试
+        const cliArgs = [
+          'npx hardhat batch-transfer-token',
+          `--config-dir "${taskParams.configDir}"`,
+          `--token-address "${taskParams.tokenAddress}"`,
+          `--from "${taskParams.from}"`,
+          `--tos "${taskParams.tos}"`,
+          `--hold-ratio "${taskParams.holdRatio}"`,
+          `--trailing-zeros "${taskParams.trailingZeros}"`,
+          `--delay-min "${taskParams.delayMin}"`,
+          `--delay-max "${taskParams.delayMax}"`,
+          `--auto-fund-gas "${taskParams.autoFundGas}"`,
+          `--network ${hre.network.name}`,
+        ]
+
+        // 添加可选参数到CLI
+        if (taskParams.precision) {
+          cliArgs.push(`--precision "${taskParams.precision}"`)
+        }
+        if (taskParams.gasPrice) {
+          cliArgs.push(`--gas-price "${taskParams.gasPrice}"`)
+        }
+
+        Logger.info(`📋 [层级${currentLevel}-任务${planIndex + 1}] 等效命令行参数:`)
+        Logger.info(`${cliArgs.join(' \\\n  ')}`)
+
+        // 直接运行 Hardhat 任务
+        await hre.run('batch-transfer-token', taskParams)
+
+        Logger.info(`✅ [层级${currentLevel}-任务${planIndex + 1}] 分发成功: ${plan.institutionName}`)
+        taskResult.success = true
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        Logger.error(`❌ [层级${currentLevel}-任务${planIndex + 1}] 分发失败: ${plan.institutionName}`, error)
+        taskResult.error = errorMessage
+      }
+
+      return taskResult
+    })
+
+    // 等待当前层级的所有任务完成
+    const levelResults = await Promise.allSettled(levelTasks)
+
+    // 处理结果
+    let levelSuccessCount = 0
+    let levelFailureCount = 0
+
+    levelResults.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        const taskResult = result.value
+        if (taskResult.success) {
+          levelSuccessCount++
+          results.completedLevels++
+          results.results.push({
+            level: taskResult.plan.level,
+            institutionName: taskResult.plan.institutionName,
+            fromAddress: taskResult.plan.fromAddress,
+            toAddressesCount: taskResult.plan.toAddresses.length,
+            success: true,
+            actualAmount: taskResult.plan.estimatedAmount,
+          })
+        } else {
+          levelFailureCount++
+          results.success = false
+          results.results.push({
+            level: taskResult.plan.level,
+            institutionName: taskResult.plan.institutionName,
+            fromAddress: taskResult.plan.fromAddress,
+            toAddressesCount: taskResult.plan.toAddresses.length,
+            success: false,
+            error: taskResult.error,
+          })
+        }
+      } else {
+        levelFailureCount++
+        results.success = false
+        const plan = plansInLevel[index]
+        results.results.push({
+          level: plan.level,
+          institutionName: plan.institutionName,
+          fromAddress: plan.fromAddress,
+          toAddressesCount: plan.toAddresses.length,
+          success: false,
+          error: `任务执行异常: ${result.reason}`,
+        })
+      }
+    })
+
+    Logger.info(`\n📊 层级 ${currentLevel} 执行完成: 成功 ${levelSuccessCount}/${plansInLevel.length}, 失败 ${levelFailureCount}`)
+
+    // 如果当前层级有失败的任务，停止后续层级的执行
+    if (levelFailureCount > 0) {
+      Logger.error(`❌ 层级 ${currentLevel} 有 ${levelFailureCount} 个任务失败，停止后续层级执行`)
+      break
+    }
+
+    // 层级间延迟 (只有不是最后一个层级时才延迟)
+    if (levelIndex < sortedLevels.length - 1) {
+      const delay = Math.random() * (levelDelayOptions.delayMax - levelDelayOptions.delayMin) + levelDelayOptions.delayMin
+      Logger.info(`⏱️  层级 ${currentLevel} 完成，等待 ${Math.round(delay / 1000)}s 后执行下一层级...`)
+      await new Promise(resolve => setTimeout(resolve, delay))
     }
   }
 

@@ -16,7 +16,7 @@ export const gasDistributionConfig: GasDistributionConfig = {
   // 中间钱包配置
   intermediateWallets: {
     hdPath: "m/44'/60'/1", // 专门用于Gas分发的HD路径
-    count: 5, // 中间钱包数量
+    count: 20, // 中间钱包数量
   },
   // 每个地址分配的Gas范围(ETH)
   gasAmounts: {

@@ -178,7 +178,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
       // 生成随机转账金额并预估总费用
       const transferPlans = toAddresses.map((toAddress: string) => {
-        const randomAmount = generateRandomTokenAmount(amountMin, amountMax, tokenDecimals, precisionNum, trailingZerosNum)
+        const randomAmount = generateRandomTokenAmount(amountMin, amountMax, Number(tokenDecimals), precisionNum, trailingZerosNum)
         return {
           from: fromWallet.address,
           to: toAddress,
@@ -343,7 +343,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           tokenAddress,
           tokenName,
           tokenSymbol,
-          tokenDecimals: tokenDecimals,
+          tokenDecimals: Number(tokenDecimals),
           fromAddress: from,
           totalAddresses: toAddresses.length,
           amountRange: { min: amountMin, max: amountMax },

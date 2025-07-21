@@ -49,7 +49,7 @@ export function generateRandomEthAmount(min: string, max: string): bigint {
   // 计算最小值的小数位数
   const minDecimals = (min.split('.')[1] || '').length
   // 精度最多比min小两位，但至少保持4位小数（模拟真实用户）
-  const precision = Math.max(4, minDecimals + 2)
+  const precision = Math.max(4, minDecimals + 1)
 
   // 生成随机数
   const randomAmount = Math.random() * (maxNum - minNum) + minNum
@@ -148,22 +148,20 @@ export function generateRandomTokenAmount(
     randomAmount = Math.round(randomAmount * multiplier) / multiplier
   }
 
-  // 转换为最小单位（考虑token的decimals）
-  let amountInMinUnits = Math.floor(randomAmount * Math.pow(10, decimals))
-
   // 应用末尾零控制
   if (trailingZeros !== undefined && trailingZeros > 0) {
     const divisor = Math.pow(10, trailingZeros)
     // 确保末尾至少有指定数量的零
-    amountInMinUnits = Math.floor(amountInMinUnits / divisor) * divisor
+    randomAmount = Math.floor(randomAmount / divisor) * divisor
 
     // 如果结果为0，至少保证一个有效的数值
-    if (amountInMinUnits === 0) {
-      amountInMinUnits = divisor
+    if (randomAmount === 0) {
+      randomAmount = divisor
     }
   }
 
-  return BigInt(amountInMinUnits)
+  // 转换为最小单位（考虑token的decimals）
+  return BigInt(Math.floor(randomAmount * Math.pow(10, decimals)))
 }
 
 // 延迟执行

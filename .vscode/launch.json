@@ -336,6 +336,41 @@
         "group": "monitoring",
         "order": 1
       }
+    },
+    {
+      "name": "🌳 Hierarchical Distribution (LIVE)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "hierarchical-distribution",
+        "--institution-index",
+        "0",
+        "--start-from-level",
+        "0",
+        "--max-level",
+        "-1",
+        "--trailing-zeros",
+        "2",
+        "--delay-min",
+        "1000",
+        "--delay-max",
+        "5000"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "hierarchical-distribution",
+        "order": 2
+      }
     }
   ]
 }

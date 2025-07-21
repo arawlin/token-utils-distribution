@@ -22,7 +22,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
     gasReceiveWindow: { start: 0, end: 2 }, // 0-2分钟
     tokenReceiveWindow: { start: 5, end: 8 }, // 5-8分钟
     retentionConfig: {
-      percentage: 30, // 保留30%的token
+      percentage: 0,
       distributorAddressIndex: 0, // 第1个地址用于分发
       holderAddressIndices: [], // 其余地址用于持有
     },
@@ -40,7 +40,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
         gasReceiveWindow: { start: 1, end: 3 }, // 1-3分钟
         tokenReceiveWindow: { start: 6, end: 9 }, // 6-9分钟
         retentionConfig: {
-          percentage: 25,
+          percentage: 5,
           distributorAddressIndex: 0,
           holderAddressIndices: [1, 2, 3, 4, 5, 6, 7],
         },
@@ -58,7 +58,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
             gasReceiveWindow: { start: 2, end: 4 }, // 2-4分钟
             tokenReceiveWindow: { start: 7, end: 10 }, // 7-10分钟
             retentionConfig: {
-              percentage: 40, // 保留40%，60%分发给子机构
+              percentage: 10,
               distributorAddressIndex: 0,
               holderAddressIndices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             },
@@ -118,7 +118,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
         gasReceiveWindow: { start: 1.5, end: 3.5 }, // 1.5-3.5分钟
         tokenReceiveWindow: { start: 6.5, end: 9.5 }, // 6.5-9.5分钟
         retentionConfig: {
-          percentage: 30,
+          percentage: 3,
           distributorAddressIndex: 0,
           holderAddressIndices: [1, 2, 3, 4, 5, 6, 7, 8, 9],
         },
@@ -178,7 +178,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
     gasReceiveWindow: { start: 0.5, end: 2.5 }, // 0.5-2.5分钟
     tokenReceiveWindow: { start: 5.5, end: 8.5 }, // 5.5-8.5分钟
     retentionConfig: {
-      percentage: 25, // 保留25%的token
+      percentage: 0,
       distributorAddressIndex: 0,
       holderAddressIndices: [],
     },
@@ -196,7 +196,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
         gasReceiveWindow: { start: 1.2, end: 3.2 }, // 1.2-3.2分钟
         tokenReceiveWindow: { start: 6.2, end: 9.2 }, // 6.2-9.2分钟
         retentionConfig: {
-          percentage: 30,
+          percentage: 10,
           distributorAddressIndex: 0,
           holderAddressIndices: [1, 2, 3, 4, 5, 6, 7, 8],
         },
@@ -254,7 +254,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
         gasReceiveWindow: { start: 1.8, end: 3.8 }, // 1.8-3.8分钟
         tokenReceiveWindow: { start: 6.8, end: 9.8 }, // 6.8-9.8分钟
         retentionConfig: {
-          percentage: 40,
+          percentage: 3,
           distributorAddressIndex: 0,
           holderAddressIndices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         },
@@ -295,7 +295,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
     gasReceiveWindow: { start: 1, end: 3 }, // 1-3分钟
     tokenReceiveWindow: { start: 6, end: 9 }, // 6-9分钟
     retentionConfig: {
-      percentage: 35, // 保留35%的token
+      percentage: 15,
       distributorAddressIndex: 0,
       holderAddressIndices: [],
     },
@@ -313,7 +313,7 @@ export const institutionTreeConfig: InstitutionNode[] = [
         gasReceiveWindow: { start: 2, end: 4 }, // 2-4分钟
         tokenReceiveWindow: { start: 7, end: 10 }, // 7-10分钟
         retentionConfig: {
-          percentage: 20,
+          percentage: 2,
           distributorAddressIndex: 0,
           holderAddressIndices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         },

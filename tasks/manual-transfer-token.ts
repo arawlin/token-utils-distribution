@@ -14,8 +14,6 @@ task('manual-transfer-token', '手动转账ERC20 Token')
   .addOptionalParam('tokenAddress', 'Token合约地址 (如不指定则使用配置中的token地址)')
   .addOptionalParam('decimals', 'Token精度 (默认18)', '18')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
-  .addFlag('dryRun', '干运行模式（不执行实际交易）')
-  .addFlag('force', '强制执行（跳过锁检查）')
   .setAction(async (taskArgs, hre) => {
     const { configDir, from, to, amount, tokenAddress, decimals, gasPrice, dryRun, force } = taskArgs
     let taskId = ''
@@ -198,9 +196,7 @@ task('manual-transfer-token', '手动转账ERC20 Token')
               const newToTokenBalance = await tokenContract.balanceOf(to)
               const newFromEthBalance = await provider.getBalance(fromWallet.address)
 
-              Logger.info(
-                `  发送钱包Token余额: ${formatTokenAmount(newFromTokenBalance, tokenDecimals)} ${tokenSymbol}`,
-              )
+              Logger.info(`  发送钱包Token余额: ${formatTokenAmount(newFromTokenBalance, tokenDecimals)} ${tokenSymbol}`)
               Logger.info(`  接收钱包Token余额: ${formatTokenAmount(newToTokenBalance, tokenDecimals)} ${tokenSymbol}`)
               Logger.info(`  发送钱包ETH余额: ${formatEther(newFromEthBalance)} ETH`)
             } else {

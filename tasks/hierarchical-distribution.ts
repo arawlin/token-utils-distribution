@@ -98,14 +98,13 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
       const config: DistributionSystemConfig = JSON.parse(readFileSync(configPath, 'utf8'))
 
       // 加载机构配置
-      const { institutionTreeConfig } = await import('../config/institutions')
 
-      if (institutionIndexNum < 0 || institutionIndexNum >= institutionTreeConfig.length) {
-        Logger.error(`无效的机构索引: ${institutionIndexNum}. 可用范围: 0-${institutionTreeConfig.length - 1}`)
+      if (institutionIndexNum < 0 || institutionIndexNum >= config.institutionTree.length) {
+        Logger.error(`无效的机构索引: ${institutionIndexNum}. 可用范围: 0-${config.institutionTree.length - 1}`)
         return
       }
 
-      const selectedInstitution = institutionTreeConfig[institutionIndexNum]
+      const selectedInstitution = config.institutionTree[institutionIndexNum]
       Logger.info(`选择的机构: ${selectedInstitution.institutionName} (${selectedInstitution.hdPath})`)
       Logger.info(`开始层级: ${startFromLevelNum}`)
       Logger.info(`最大层级: ${maxLevelNum === -1 ? '全部' : maxLevelNum}`)
@@ -140,7 +139,6 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
       // 生成层级分发计划
       const distributionPlan = await generateHierarchicalPlan(
         selectedInstitution,
-        allWallets,
         tokenContract,
         tokenDecimals,
         startFromLevelNum,
@@ -224,44 +222,12 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
 // 生成层级分发计划
 async function generateHierarchicalPlan(
   institution: InstitutionNode,
-  allWallets: Map<string, ethers.Wallet>,
   tokenContract: ethers.Contract,
   tokenDecimals: number,
   startFromLevel: number,
   maxLevel: number,
 ): Promise<HierarchicalDistributionPlan[]> {
   const plan: HierarchicalDistributionPlan[] = []
-  const hdPathToAddressesMap = new Map<string, string[]>()
-
-  // 构建HD路径到地址的映射 - 使用简单的索引匹配方式
-  // 假设钱包按照机构配置的顺序生成
-  let globalIndex = 0
-  const allAddresses = Array.from(allWallets.keys())
-
-  function buildAddressMapping(node: InstitutionNode): void {
-    const addresses: string[] = []
-
-    for (let i = 0; i < node.addressCount; i++) {
-      if (globalIndex < allAddresses.length) {
-        addresses.push(allAddresses[globalIndex])
-        globalIndex++
-      }
-    }
-
-    if (addresses.length > 0) {
-      hdPathToAddressesMap.set(node.hdPath, addresses)
-      // 更新机构节点的地址信息以便后续使用
-      node.addresses = addresses
-    }
-
-    // 递归处理子节点
-    for (const child of node.childNodes) {
-      buildAddressMapping(child)
-    }
-  }
-
-  // 为选择的机构构建地址映射
-  buildAddressMapping(institution)
 
   // 递归遍历机构树生成分发计划
   async function traverseInstitution(node: InstitutionNode, currentLevel: number) {
@@ -280,21 +246,23 @@ async function generateHierarchicalPlan(
 
     // 如果有子节点且配置了分发，需要分发
     if (node.childNodes.length > 0 && node.retentionConfig && node.retentionConfig.distributorAddressIndex >= 0) {
-      // 找到分发者地址
+      // 从node.addresses中找到分发者地址
       const distributorIndex = node.retentionConfig.distributorAddressIndex
-      const nodeAddresses = hdPathToAddressesMap.get(node.hdPath)
-      const distributorAddress = nodeAddresses?.[distributorIndex]
+      const nodeAddresses = node.addresses || []
+      const distributorAddress = nodeAddresses[distributorIndex]
 
       if (!distributorAddress) {
-        Logger.warn(`机构 ${node.institutionName} (${node.hdPath}) 的分发者地址未找到. 地址数量: ${nodeAddresses?.length || 0}`)
+        Logger.warn(
+          `机构 ${node.institutionName} (${node.hdPath}) 的分发者地址未找到. 地址数量: ${nodeAddresses.length}, 分发者索引: ${distributorIndex}`,
+        )
         return
       }
 
       // 收集所有子机构的所有接收地址
       const childAddresses: string[] = []
       for (const child of node.childNodes) {
-        const childAddresses_temp = hdPathToAddressesMap.get(child.hdPath)
-        if (childAddresses_temp && childAddresses_temp.length > 0) {
+        const childAddresses_temp = child.addresses || []
+        if (childAddresses_temp.length > 0) {
           // 添加该子机构的所有地址
           childAddresses.push(...childAddresses_temp)
         }

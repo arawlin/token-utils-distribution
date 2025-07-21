@@ -143,7 +143,7 @@ function analyzeGasRequirements(nodes: InstitutionNode[]): {
     }
   })
 
-  const gasLimits = calculateGasLimits(10) // 使用 10 gwei gas price
+  const gasLimits = calculateGasLimits(0.2) // 使用 0.2 gwei gas price
 
   const totalTransferGas = transferOperations * parseFloat(gasLimits.transferToken.estimatedCost)
   const totalSwapGas = totalSwapAddresses * parseFloat(gasLimits.swapToken.estimatedCost)
@@ -281,14 +281,14 @@ function showDetailedAnalysis() {
   console.log(`   📤 Token转账 Gas Limit: ${gasRequirements.gasLimitConfig.transferToken.total.toLocaleString()} gas`)
   console.log(`      - 基础转账: ${gasRequirements.gasLimitConfig.transferToken.baseGas.toLocaleString()} gas`)
   console.log(`      - ERC20逻辑: ${gasRequirements.gasLimitConfig.transferToken.erc20Logic.toLocaleString()} gas`)
-  console.log(`      - 单次费用 (10 gwei): ${gasRequirements.gasLimitConfig.transferToken.estimatedCost} ETH`)
+  console.log(`      - 单次费用: ${gasRequirements.gasLimitConfig.transferToken.estimatedCost} ETH`)
 
   console.log(`   🔄 Token交换 Gas Limit: ${gasRequirements.gasLimitConfig.swapToken.total.toLocaleString()} gas`)
   console.log(`      - 基础转账: ${gasRequirements.gasLimitConfig.swapToken.baseGas.toLocaleString()} gas`)
   console.log(`      - 交换逻辑: ${gasRequirements.gasLimitConfig.swapToken.swapLogic.toLocaleString()} gas`)
-  console.log(`      - 单次费用 (10 gwei): ${gasRequirements.gasLimitConfig.swapToken.estimatedCost} ETH`)
+  console.log(`      - 单次费用: ${gasRequirements.gasLimitConfig.swapToken.estimatedCost} ETH`)
 
-  console.log('\n   💰 总 Gas 费用预估 (10 gwei):')
+  console.log('\n   💰 总 Gas 费用预估 :')
   console.log(`   所有转账操作: ${gasRequirements.totalGasRequired.transferGas} ETH`)
   console.log(`   所有交换操作: ${gasRequirements.totalGasRequired.swapGas} ETH`)
   console.log(`   📊 总计: ${gasRequirements.totalGasRequired.total} ETH`)

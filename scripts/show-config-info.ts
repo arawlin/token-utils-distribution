@@ -91,6 +91,18 @@ function analyzeGasRequirements(nodes: InstitutionNode[]): {
     holderAddresses: number
     totalSwapAddresses: number
   }
+  institutionGasFees: Array<{
+    institutionName: string
+    hdPath: string
+    distributionGasFee: string // ETH
+    tradingGasFee: string // ETH
+    totalGasFee: string // ETH
+    addressCount: number
+    operations: {
+      transferOperations: number
+      swapOperations: number
+    }
+  }>
 } {
   const allNodes = getAllNodes(nodes)
 
@@ -136,6 +148,47 @@ function analyzeGasRequirements(nodes: InstitutionNode[]): {
   const totalTransferGas = transferOperations * parseFloat(gasLimits.transferToken.estimatedCost)
   const totalSwapGas = totalSwapAddresses * parseFloat(gasLimits.swapToken.estimatedCost)
 
+  // 计算每个机构的 gas fee
+  const institutionGasFees = allNodes.map(node => {
+    const institutionName = node.institutionName || `Institution-${node.hdPath}`
+
+    // 计算该机构的转账操作数量
+    let nodeTransferOperations = 0
+    if (node.childNodes.length > 0) {
+      nodeTransferOperations = node.childNodes.reduce((sum, child) => sum + child.addressCount, 0)
+    }
+
+    // 计算该机构的swap操作数量
+    let nodeSwapOperations = 0
+    if (node.retentionConfig && node.gasUsageConfig) {
+      if (node.gasUsageConfig.isEndUser) {
+        // 最终用户：所有地址都可能进行swap
+        nodeSwapOperations = node.addressCount
+      } else {
+        // 非最终用户：只有holder addresses进行swap
+        nodeSwapOperations = node.retentionConfig.holderAddressIndices.length
+      }
+    }
+
+    // 计算gas费用
+    const distributionGasFee = nodeTransferOperations * parseFloat(gasLimits.transferToken.estimatedCost)
+    const tradingGasFee = nodeSwapOperations * parseFloat(gasLimits.swapToken.estimatedCost)
+    const totalGasFee = distributionGasFee + tradingGasFee
+
+    return {
+      institutionName,
+      hdPath: node.hdPath,
+      distributionGasFee: distributionGasFee.toFixed(6),
+      tradingGasFee: tradingGasFee.toFixed(6),
+      totalGasFee: totalGasFee.toFixed(6),
+      addressCount: node.addressCount,
+      operations: {
+        transferOperations: nodeTransferOperations,
+        swapOperations: nodeSwapOperations,
+      },
+    }
+  })
+
   return {
     totalTransferOperations: transferOperations,
     totalSwapOperations: totalSwapAddresses,
@@ -150,6 +203,7 @@ function analyzeGasRequirements(nodes: InstitutionNode[]): {
       holderAddresses: holderCount,
       totalSwapAddresses,
     },
+    institutionGasFees,
   }
 }
 
@@ -238,6 +292,44 @@ function showDetailedAnalysis() {
   console.log(`   所有转账操作: ${gasRequirements.totalGasRequired.transferGas} ETH`)
   console.log(`   所有交换操作: ${gasRequirements.totalGasRequired.swapGas} ETH`)
   console.log(`   📊 总计: ${gasRequirements.totalGasRequired.total} ETH`)
+
+  // 每个机构的 Gas Fee 详情
+  console.log('\n🏛️  各机构 Gas Fee 详情:')
+  gasRequirements.institutionGasFees.forEach((institution, index) => {
+    console.log(`   ${index + 1}. ${institution.institutionName}`)
+    console.log(`      路径: ${institution.hdPath}`)
+    console.log(`      地址数量: ${institution.addressCount}`)
+    console.log(`      📤 分发操作: ${institution.operations.transferOperations} 次 → ${institution.distributionGasFee} ETH`)
+    console.log(`      🔄 交易操作: ${institution.operations.swapOperations} 次 → ${institution.tradingGasFee} ETH`)
+    console.log(`      💰 机构总费用: ${institution.totalGasFee} ETH`)
+    if (index < gasRequirements.institutionGasFees.length - 1) {
+      console.log('')
+    }
+  })
+
+  // 机构 Gas Fee 汇总表
+  console.log('\n📋 机构 Gas Fee 汇总表:')
+  console.log('   ┌─────────────────────────────┬──────────┬──────────┬──────────┬──────────┐')
+  console.log('   │         机构名称            │ 分发费用 │ 交易费用 │ 总费用   │ 占比(%)  │')
+  console.log('   ├─────────────────────────────┼──────────┼──────────┼──────────┼──────────┤')
+
+  const totalGasSum = gasRequirements.institutionGasFees.reduce((sum, inst) => sum + parseFloat(inst.totalGasFee), 0)
+
+  gasRequirements.institutionGasFees.forEach(institution => {
+    const percentage = totalGasSum > 0 ? ((parseFloat(institution.totalGasFee) / totalGasSum) * 100).toFixed(1) : '0.0'
+    const nameDisplay =
+      institution.institutionName.length > 25 ? institution.institutionName.substring(0, 22) + '...' : institution.institutionName
+
+    console.log(
+      `   │ ${nameDisplay.padEnd(27)} │ ${institution.distributionGasFee.padStart(8)} │ ${institution.tradingGasFee.padStart(8)} │ ${institution.totalGasFee.padStart(8)} │ ${percentage.padStart(7)}% │`,
+    )
+  })
+
+  console.log('   ├─────────────────────────────┼──────────┼──────────┼──────────┼──────────┤')
+  console.log(
+    `   │ ${'总计'.padEnd(27)} │ ${gasRequirements.totalGasRequired.transferGas.padStart(8)} │ ${gasRequirements.totalGasRequired.swapGas.padStart(8)} │ ${gasRequirements.totalGasRequired.total.padStart(8)} │ ${' 100.0%'.padStart(9)} │`,
+  )
+  console.log('   └─────────────────────────────┴──────────┴──────────┴──────────┴──────────┘')
 
   // 按深度统计
   console.log('\n🌳 按深度统计:')

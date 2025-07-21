@@ -37,7 +37,6 @@ task('batch-transfer-token', '批量转账Token到多个地址')
   .addOptionalParam('precision', '随机金额精度 (小数位数)')
   .addOptionalParam('trailingZeros', '末尾零的最小数量 (例: 3 表示至少以000结尾)', '2')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
-  .addOptionalParam('batchSize', '批处理大小（并发交易数量）', '5')
   .addOptionalParam('delayMin', '交易间最小延迟（毫秒）', '1000')
   .addOptionalParam('delayMax', '交易间最大延迟（毫秒）', '5000')
   .addOptionalParam('autoFundGas', '当ETH余额不足时自动转账ETH', 'true')
@@ -54,7 +53,6 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       precision,
       trailingZeros,
       gasPrice,
-      batchSize,
       delayMin,
       delayMax,
       autoFundGas,
@@ -66,7 +64,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
     const tokenAddressReal = tokenAddress || process.env.TOKEN_ADDRESS
 
     try {
-      Logger.info('开始执行批量转账Token任务')
+      Logger.info('开始执行顺序转账Token任务')
       Logger.info(`网络: ${hre.network.name}`)
       Logger.info(`Token地址: ${tokenAddressReal}`)
       Logger.info(`发送地址: ${from}`)
@@ -442,11 +440,10 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           Logger.info(`资助后ETH余额: ${ethers.formatEther(newFromEthBalance)} ETH`)
 
           if (newFromEthBalance < totalGasFee) {
-            Logger.error('资助后余额仍然不足，无法继续执行批量转账')
+            Logger.error('资助后余额仍然不足，无法继续执行顺序转账')
             return
           }
-
-          Logger.info('✅ ETH余额检查通过，继续执行批量转账')
+          Logger.info('✅ ETH余额检查通过，继续执行顺序转账')
         } catch (error) {
           Logger.error('自动转账ETH失败:', error)
           return
@@ -466,94 +463,85 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       }
 
       // 执行实际转账
-      Logger.info('开始执行批量转账...')
+      Logger.info('开始执行顺序转账...')
 
-      const batchSizeNum = parseInt(batchSize)
       const delayMinNum = parseInt(delayMin)
       const delayMaxNum = parseInt(delayMax)
 
-      // 分批处理转账
-      for (let i = 0; i < validTransferPlans.length; i += batchSizeNum) {
-        const batch = validTransferPlans.slice(i, i + batchSizeNum)
-        Logger.info(`\n=== 执行第 ${Math.floor(i / batchSizeNum) + 1} 批次 (${batch.length} 笔交易) ===`)
+      // 顺序处理转账（避免nonce冲突）
+      for (let i = 0; i < validTransferPlans.length; i++) {
+        const plan = validTransferPlans[i]
+        Logger.info(`\n=== 执行第 ${i + 1}/${validTransferPlans.length} 笔转账 ===`)
 
-        // 并发执行当前批次
-        const batchPromises = batch.map(async (plan: TokenTransferPlan, batchIndex: number) => {
-          const globalIndex = i + batchIndex
+        try {
+          // 获取当前nonce（每次都重新获取确保准确性）
+          const nonce = await provider.getTransactionCount(fromWallet.address, 'pending')
 
-          try {
-            // 添加随机延迟，避免nonce冲突
-            if (batchIndex > 0) {
-              const delay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
-              await new Promise(resolve => setTimeout(resolve, delay))
-            }
+          Logger.info(
+            `[${i + 1}/${validTransferPlans.length}] 转账 ${plan.amount} ${await tokenContract.symbol()} 到 ${plan.to.slice(0, 10)}... (nonce: ${nonce})`,
+          )
 
-            const nonce = await provider.getTransactionCount(fromWallet.address, 'pending')
+          const tx = await tokenContract.transfer(plan.to, plan.amountBigInt, {
+            gasPrice: gasPriceWei,
+            gasLimit: gasLimit,
+            nonce: nonce,
+          })
 
-            Logger.info(
-              `[${globalIndex + 1}/${validTransferPlans.length}] 转账 ${plan.amount} ${await tokenContract.symbol()} 到 ${plan.to.slice(0, 10)}...`,
-            )
+          Logger.info(`[${i + 1}] 交易已提交: ${tx.hash}`)
 
-            const tx = await tokenContract.transfer(plan.to, plan.amountBigInt, {
-              gasPrice: gasPriceWei,
-              gasLimit: gasLimit,
-              nonce: nonce,
-            })
+          // 等待确认
+          const receipt = await tx.wait()
 
-            Logger.info(`[${globalIndex + 1}] 交易已提交: ${tx.hash}`)
-
-            // 等待确认
-            const receipt = await tx.wait()
-
-            const transaction = {
-              from: plan.from,
-              to: plan.to,
-              amount: plan.amount,
-              txHash: tx.hash,
-              status: receipt?.status === 1 ? ('success' as const) : ('failed' as const),
-              error: undefined as string | undefined,
-            }
-
-            if (receipt?.status === 1) {
-              Logger.info(`[${globalIndex + 1}] ✅ 转账成功: ${tx.hash}`)
-              results.success++
-            } else {
-              Logger.error(`[${globalIndex + 1}] ❌ 交易失败: ${tx.hash}`)
-              transaction.error = '交易执行失败'
-              results.failed++
-            }
-
-            results.transactions.push(transaction)
-            return transaction
-          } catch (error) {
-            Logger.error(`[${globalIndex + 1}] ❌ 转账失败:`, error)
-
-            const transaction = {
-              from: plan.from,
-              to: plan.to,
-              amount: plan.amount,
-              error: error instanceof Error ? error.message : String(error),
-              status: 'failed' as const,
-            }
-
-            results.transactions.push(transaction)
-            results.failed++
-            return transaction
+          const transaction = {
+            from: plan.from,
+            to: plan.to,
+            amount: plan.amount,
+            txHash: tx.hash,
+            status: receipt?.status === 1 ? ('success' as const) : ('failed' as const),
+            error: undefined as string | undefined,
           }
-        })
 
-        // 等待当前批次完成
-        await Promise.all(batchPromises)
+          if (receipt?.status === 1) {
+            Logger.info(`[${i + 1}] ✅ 转账成功: ${tx.hash}`)
+            results.success++
+          } else {
+            Logger.error(`[${i + 1}] ❌ 交易失败: ${tx.hash}`)
+            transaction.error = '交易执行失败'
+            results.failed++
+          }
 
-        // 批次间延迟
-        if (i + batchSizeNum < validTransferPlans.length) {
-          const batchDelay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
-          Logger.info(`批次完成，等待 ${Math.round(batchDelay)}ms 后执行下一批次...`)
-          await new Promise(resolve => setTimeout(resolve, batchDelay))
+          results.transactions.push(transaction)
+
+          // 交易间延迟
+          if (i < validTransferPlans.length - 1) {
+            const delay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
+            Logger.info(`等待 ${Math.round(delay)}ms 后执行下一笔转账...`)
+            await new Promise(resolve => setTimeout(resolve, delay))
+          }
+        } catch (error) {
+          Logger.error(`[${i + 1}] ❌ 转账失败:`, error)
+
+          const transaction = {
+            from: plan.from,
+            to: plan.to,
+            amount: plan.amount,
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed' as const,
+          }
+
+          results.transactions.push(transaction)
+          results.failed++
+
+          // 即使失败也要延迟，避免快速重试
+          if (i < validTransferPlans.length - 1) {
+            const delay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
+            Logger.info(`失败后等待 ${Math.round(delay)}ms 再继续...`)
+            await new Promise(resolve => setTimeout(resolve, delay))
+          }
         }
       }
 
-      Logger.info('\n=== 批量转账完成 ===')
+      Logger.info('\n=== 顺序转账完成 ===')
       Logger.info(`总计: ${results.success} 成功, ${results.failed} 失败`)
 
       // 显示最终余额
@@ -595,9 +583,9 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       writeFileSync(resultPath, JSON.stringify(resultData, null, 2))
       Logger.info(`结果已保存到: ${resultPath}`)
 
-      Logger.info('批量转账Token任务完成!')
+      Logger.info('顺序转账Token任务完成!')
     } catch (error) {
-      Logger.error('批量转账Token任务失败:', error)
+      Logger.error('顺序转账Token任务失败:', error)
       throw error
     }
   })

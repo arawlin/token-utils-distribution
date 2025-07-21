@@ -1,10 +1,10 @@
 import { ethers } from 'ethers'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
 import { DistributionSystemConfig } from '../types'
 import { coordinator } from './coordinator'
-import { formatEther, loadAllWallets, Logger } from './utils'
+import { createTimestampFilename, formatEther, loadAllWallets, Logger } from './utils'
 
 task('manual-transfer', '手动转账ETH')
   .addOptionalParam('configDir', '配置目录', './.ws')
@@ -14,6 +14,34 @@ task('manual-transfer', '手动转账ETH')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
   .setAction(async (taskArgs, hre) => {
     const { configDir, from, to, amount, gasPrice } = taskArgs
+
+    // 创建记录对象
+    const operationRecord = {
+      taskType: 'manual-transfer',
+      network: hre.network.name,
+      timestamp: new Date().toISOString(),
+      parameters: {
+        from,
+        to,
+        amount,
+        gasPrice: gasPrice || 'auto',
+      },
+      result: {
+        success: false,
+        transactionHash: '',
+        blockNumber: 0,
+        actualGasFee: '',
+        error: '',
+        balancesBefore: {
+          from: '',
+          to: '',
+        },
+        balancesAfter: {
+          from: '',
+          to: '',
+        },
+      },
+    }
 
     try {
       Logger.info('开始执行手动转账任务')
@@ -65,6 +93,11 @@ task('manual-transfer', '手动转账ETH')
       // 获取发送钱包余额
       const fromBalance = await provider.getBalance(fromWallet.address)
       const toBalance = await provider.getBalance(to)
+
+      // 记录初始余额
+      operationRecord.result.balancesBefore.from = formatEther(fromBalance)
+      operationRecord.result.balancesBefore.to = formatEther(toBalance)
+
       Logger.info(`发送钱包余额: ${formatEther(fromBalance)} ETH`)
       Logger.info(`接收钱包余额: ${formatEther(toBalance)} ETH`)
 
@@ -138,6 +171,11 @@ task('manual-transfer', '手动转账ETH')
         const receipt = await tx.wait()
 
         if (receipt?.status === 1) {
+          operationRecord.result.success = true
+          operationRecord.result.transactionHash = tx.hash
+          operationRecord.result.blockNumber = receipt.blockNumber || 0
+          operationRecord.result.actualGasFee = formatEther(receipt.gasUsed * gasPriceWei)
+
           Logger.info(`✅ 转账成功!`)
           Logger.info(`  交易哈希: ${tx.hash}`)
           Logger.info(`  区块号: ${receipt.blockNumber}`)
@@ -146,13 +184,20 @@ task('manual-transfer', '手动转账ETH')
           // 显示转账后余额
           const newFromBalance = await provider.getBalance(fromWallet.address)
           const newToBalance = await provider.getBalance(to)
+
+          // 记录最终余额
+          operationRecord.result.balancesAfter.from = formatEther(newFromBalance)
+          operationRecord.result.balancesAfter.to = formatEther(newToBalance)
+
           Logger.info(`  转账后余额: ${formatEther(newFromBalance)} ETH`)
           Logger.info(`  接收钱包余额: ${formatEther(newToBalance)} ETH`)
         } else {
           Logger.error('❌ 交易失败')
+          operationRecord.result.error = 'Transaction failed - status 0'
         }
       } catch (error) {
         Logger.error('转账失败:', error)
+        operationRecord.result.error = error instanceof Error ? error.message : String(error)
         throw error
       }
 
@@ -160,6 +205,17 @@ task('manual-transfer', '手动转账ETH')
     } catch (error) {
       Logger.error('手动转账任务失败:', error)
 
-      throw error
+      // 记录错误信息
+      operationRecord.result.error = error instanceof Error ? error.message : String(error)
     }
+
+    // 保存操作记录
+    const resultsDir = join(configDir, 'transfer-results')
+    if (!existsSync(resultsDir)) {
+      mkdirSync(resultsDir, { recursive: true })
+    }
+
+    const resultPath = join(resultsDir, createTimestampFilename('manual-transfer-eth'))
+    writeFileSync(resultPath, JSON.stringify(operationRecord, null, 2))
+    Logger.info(`操作记录已保存到: ${resultPath}`)
   })

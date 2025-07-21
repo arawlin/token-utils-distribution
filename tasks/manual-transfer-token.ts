@@ -1,10 +1,10 @@
 import { ethers } from 'ethers'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
 import { DistributionSystemConfig } from '../types'
 import { coordinator } from './coordinator'
-import { formatEther, formatTokenAmount, loadAllWallets, Logger } from './utils'
+import { createTimestampFilename, formatEther, formatTokenAmount, loadAllWallets, Logger } from './utils'
 
 task('manual-transfer-token', '手动转账ERC20 Token')
   .addOptionalParam('configDir', '配置目录', './.ws')
@@ -15,22 +15,53 @@ task('manual-transfer-token', '手动转账ERC20 Token')
   .addOptionalParam('decimals', 'Token精度 (默认18)', '18')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, from, to, amount, tokenAddress, decimals, gasPrice, dryRun, force } = taskArgs
-    let taskId = ''
+    const { configDir, from, to, amount, tokenAddress, decimals, gasPrice } = taskArgs
+
+    // 创建记录对象
+    const operationRecord = {
+      taskType: 'manual-transfer-token',
+      network: hre.network.name,
+      timestamp: new Date().toISOString(),
+      parameters: {
+        from,
+        to,
+        amount,
+        tokenAddress: tokenAddress || 'from-config',
+        decimals,
+        gasPrice: gasPrice || 'auto',
+      },
+      tokenInfo: {
+        name: '',
+        symbol: '',
+        decimals: 0,
+        contractAddress: '',
+      },
+      result: {
+        success: false,
+        transactionHash: '',
+        blockNumber: 0,
+        actualGasFee: '',
+        error: '',
+        balancesBefore: {
+          fromToken: '',
+          toToken: '',
+          fromEth: '',
+        },
+        balancesAfter: {
+          fromToken: '',
+          toToken: '',
+          fromEth: '',
+        },
+      },
+    }
 
     try {
-      // 获取任务锁
-      if (!force) {
-        taskId = await coordinator.acquireTaskLock('manual-transfer-token')
-      }
-
       Logger.info('开始执行手动Token转账任务')
       Logger.info(`网络: ${hre.network.name}`)
       Logger.info(`发送地址: ${from}`)
       Logger.info(`接收地址: ${to}`)
       Logger.info(`转账金额: ${amount} Token`)
       Logger.info(`Token精度: ${decimals}`)
-      Logger.info(`干运行模式: ${dryRun}`)
 
       const configPath = join(configDir, 'distribution-config.json')
       const seedPath = join(configDir, 'master-seed.json')
@@ -62,6 +93,10 @@ task('manual-transfer-token', '手动转账ERC20 Token')
       }
 
       Logger.info(`Token合约地址: ${finalTokenAddress}`)
+
+      // 记录Token合约地址
+      operationRecord.parameters.tokenAddress = finalTokenAddress
+      operationRecord.tokenInfo.contractAddress = finalTokenAddress
 
       // 加载所有钱包
       Logger.info('加载所有钱包地址...')
@@ -99,133 +134,143 @@ task('manual-transfer-token', '手动转账ERC20 Token')
         fromWallet,
       )
 
-      try {
-        // 获取Token信息
-        const [tokenName, tokenSymbol, tokenDecimals] = await Promise.all([
-          tokenContract.name().catch(() => 'Unknown'),
-          tokenContract.symbol().catch(() => 'UNKNOWN'),
-          tokenContract.decimals().catch(() => parseInt(decimals)),
-        ])
+      // 获取Token信息
+      const [tokenName, tokenSymbol, tokenDecimals] = await Promise.all([
+        tokenContract.name().catch(() => 'Unknown'),
+        tokenContract.symbol().catch(() => 'UNKNOWN'),
+        tokenContract.decimals().catch(() => parseInt(decimals)),
+      ])
 
-        Logger.info(`Token信息: ${tokenName} (${tokenSymbol}), 精度: ${tokenDecimals}`)
+      Logger.info(`Token信息: ${tokenName} (${tokenSymbol}), 精度: ${tokenDecimals}`)
 
-        // 获取余额
-        const fromTokenBalance = await tokenContract.balanceOf(fromWallet.address)
-        const toTokenBalance = await tokenContract.balanceOf(to)
-        const fromEthBalance = await provider.getBalance(fromWallet.address)
+      // 记录Token信息
+      operationRecord.tokenInfo.name = tokenName
+      operationRecord.tokenInfo.symbol = tokenSymbol
+      operationRecord.tokenInfo.decimals = Number(tokenDecimals)
 
-        Logger.info(`发送钱包Token余额: ${formatTokenAmount(fromTokenBalance, tokenDecimals)} ${tokenSymbol}`)
-        Logger.info(`发送钱包ETH余额: ${formatEther(fromEthBalance)} ETH`)
-        Logger.info(`接收钱包Token余额: ${formatTokenAmount(toTokenBalance, tokenDecimals)} ${tokenSymbol}`)
+      // 获取余额
+      const fromTokenBalance = await tokenContract.balanceOf(fromWallet.address)
+      const toTokenBalance = await tokenContract.balanceOf(to)
+      const fromEthBalance = await provider.getBalance(fromWallet.address)
 
-        // 处理转账金额
-        let transferAmount: bigint
-        if (amount === '-1') {
-          // 转移所有Token余额
-          transferAmount = fromTokenBalance
-          Logger.info(`转移所有Token余额: ${formatTokenAmount(transferAmount, tokenDecimals)} ${tokenSymbol}`)
-        } else {
-          try {
-            transferAmount = ethers.parseUnits(amount, tokenDecimals)
-          } catch {
-            Logger.error(`无效的金额格式: ${amount}`)
-            return
-          }
-        }
+      // 记录初始余额
+      operationRecord.result.balancesBefore.fromToken = formatTokenAmount(fromTokenBalance, tokenDecimals)
+      operationRecord.result.balancesBefore.toToken = formatTokenAmount(toTokenBalance, tokenDecimals)
+      operationRecord.result.balancesBefore.fromEth = formatEther(fromEthBalance)
 
-        // 检查Token余额是否足够
-        if (fromTokenBalance < transferAmount) {
-          Logger.error(`Token余额不足:`)
-          Logger.error(`  当前余额: ${formatTokenAmount(fromTokenBalance, tokenDecimals)} ${tokenSymbol}`)
-          Logger.error(`  转账金额: ${formatTokenAmount(transferAmount, tokenDecimals)} ${tokenSymbol}`)
+      Logger.info(`发送钱包Token余额: ${formatTokenAmount(fromTokenBalance, tokenDecimals)} ${tokenSymbol}`)
+      Logger.info(`发送钱包ETH余额: ${formatEther(fromEthBalance)} ETH`)
+      Logger.info(`接收钱包Token余额: ${formatTokenAmount(toTokenBalance, tokenDecimals)} ${tokenSymbol}`)
+
+      // 处理转账金额
+      let transferAmount: bigint
+      if (amount === '-1') {
+        // 转移所有Token余额
+        transferAmount = fromTokenBalance
+        Logger.info(`转移所有Token余额: ${formatTokenAmount(transferAmount, tokenDecimals)} ${tokenSymbol}`)
+      } else {
+        try {
+          transferAmount = ethers.parseUnits(amount, tokenDecimals)
+        } catch {
+          Logger.error(`无效的金额格式: ${amount}`)
           return
         }
+      }
 
-        // 检查ETH余额是否足够支付gas费
-        const gasPriceWei = gasPrice
-          ? ethers.parseUnits(gasPrice, 'gwei')
-          : (await coordinator.getGasPriceRecommendation(provider)).standard
-
-        // 估算gas费用 (ERC20 transfer通常需要约60,000 gas)
-        const estimatedGasLimit = 80000n
-        const estimatedGasFee = estimatedGasLimit * gasPriceWei
-
-        if (fromEthBalance < estimatedGasFee) {
-          Logger.error(`ETH余额不足支付gas费:`)
-          Logger.error(`  当前ETH余额: ${formatEther(fromEthBalance)} ETH`)
-          Logger.error(`  预估gas费: ${formatEther(estimatedGasFee)} ETH`)
-          return
-        }
-
-        Logger.info(`转账详情:`)
-        Logger.info(`  从: ${fromWallet.address}`)
-        Logger.info(`  到: ${to}`)
-        Logger.info(`  金额: ${formatTokenAmount(transferAmount, tokenDecimals)} ${tokenSymbol}`)
-        Logger.info(`  Token合约: ${finalTokenAddress}`)
-        Logger.info(`  Gas价格: ${ethers.formatUnits(gasPriceWei, 'gwei')} gwei`)
-        Logger.info(`  预估gas费: ${formatEther(estimatedGasFee)} ETH`)
-
-        if (dryRun) {
-          Logger.info('[DRY-RUN] Token转账模拟完成，未执行实际交易')
-        } else {
-          // 执行Token转账
-          Logger.info('执行Token转账...')
-
-          try {
-            const nonce = await coordinator.getNextNonce(fromWallet.address, provider)
-
-            const tx = await tokenContract.transfer(to, transferAmount, {
-              gasPrice: gasPriceWei,
-              gasLimit: estimatedGasLimit,
-              nonce: nonce,
-            })
-
-            Logger.info(`交易已提交: ${tx.hash}`)
-            Logger.info('等待交易确认...')
-
-            const receipt = await tx.wait()
-
-            if (receipt?.status === 1) {
-              Logger.info(`✅ Token转账成功!`)
-              Logger.info(`  交易哈希: ${tx.hash}`)
-              Logger.info(`  区块号: ${receipt.blockNumber}`)
-              Logger.info(`  实际gas费: ${formatEther(receipt.gasUsed * gasPriceWei)} ETH`)
-
-              // 显示转账后余额
-              const newFromTokenBalance = await tokenContract.balanceOf(fromWallet.address)
-              const newToTokenBalance = await tokenContract.balanceOf(to)
-              const newFromEthBalance = await provider.getBalance(fromWallet.address)
-
-              Logger.info(`  发送钱包Token余额: ${formatTokenAmount(newFromTokenBalance, tokenDecimals)} ${tokenSymbol}`)
-              Logger.info(`  接收钱包Token余额: ${formatTokenAmount(newToTokenBalance, tokenDecimals)} ${tokenSymbol}`)
-              Logger.info(`  发送钱包ETH余额: ${formatEther(newFromEthBalance)} ETH`)
-            } else {
-              Logger.error('❌ 交易失败')
-            }
-          } catch (error) {
-            Logger.error('Token转账失败:', error)
-            throw error
-          }
-        }
-      } catch (error) {
-        Logger.error('获取Token信息失败，请检查Token合约地址是否正确:', error)
+      // 检查Token余额是否足够
+      if (fromTokenBalance < transferAmount) {
+        Logger.error(`Token余额不足:`)
+        Logger.error(`  当前余额: ${formatTokenAmount(fromTokenBalance, tokenDecimals)} ${tokenSymbol}`)
+        Logger.error(`  转账金额: ${formatTokenAmount(transferAmount, tokenDecimals)} ${tokenSymbol}`)
         return
       }
 
-      Logger.info('手动Token转账任务完成!')
+      // 检查ETH余额是否足够支付gas费
+      const gasPriceWei = gasPrice ? ethers.parseUnits(gasPrice, 'gwei') : (await coordinator.getGasPriceRecommendation(provider)).standard
 
-      // 释放任务锁
-      if (!force && taskId) {
-        await coordinator.releaseTaskLock(taskId, 'completed')
+      // 估算gas费用 (ERC20 transfer通常需要约60,000 gas)
+      const estimatedGasLimit = 80000n
+      const estimatedGasFee = estimatedGasLimit * gasPriceWei
+
+      if (fromEthBalance < estimatedGasFee) {
+        Logger.error(`ETH余额不足支付gas费:`)
+        Logger.error(`  当前ETH余额: ${formatEther(fromEthBalance)} ETH`)
+        Logger.error(`  预估gas费: ${formatEther(estimatedGasFee)} ETH`)
+        return
       }
+
+      Logger.info(`转账详情:`)
+      Logger.info(`  从: ${fromWallet.address}`)
+      Logger.info(`  到: ${to}`)
+      Logger.info(`  金额: ${formatTokenAmount(transferAmount, tokenDecimals)} ${tokenSymbol}`)
+      Logger.info(`  Token合约: ${finalTokenAddress}`)
+      Logger.info(`  Gas价格: ${ethers.formatUnits(gasPriceWei, 'gwei')} gwei`)
+      Logger.info(`  预估gas费: ${formatEther(estimatedGasFee)} ETH`)
+
+      // 执行Token转账
+      Logger.info('执行Token转账...')
+
+      const nonce = await coordinator.getNextNonce(fromWallet.address, provider)
+
+      const tx = await tokenContract.transfer(to, transferAmount, {
+        gasPrice: gasPriceWei,
+        gasLimit: estimatedGasLimit,
+        nonce: nonce,
+      })
+
+      Logger.info(`交易已提交: ${tx.hash}`)
+      Logger.info('等待交易确认...')
+
+      const receipt = await tx.wait()
+
+      if (receipt?.status === 1) {
+        operationRecord.result.success = true
+        operationRecord.result.transactionHash = tx.hash
+        operationRecord.result.blockNumber = receipt.blockNumber || 0
+        operationRecord.result.actualGasFee = formatEther(receipt.gasUsed * gasPriceWei)
+
+        Logger.info(`✅ Token转账成功!`)
+        Logger.info(`  交易哈希: ${tx.hash}`)
+        Logger.info(`  区块号: ${receipt.blockNumber}`)
+        Logger.info(`  实际gas费: ${formatEther(receipt.gasUsed * gasPriceWei)} ETH`)
+
+        // 显示转账后余额
+        const newFromTokenBalance = await tokenContract.balanceOf(fromWallet.address)
+        const newToTokenBalance = await tokenContract.balanceOf(to)
+        const newFromEthBalance = await provider.getBalance(fromWallet.address)
+
+        // 记录最终余额
+        operationRecord.result.balancesAfter.fromToken = formatTokenAmount(newFromTokenBalance, tokenDecimals)
+        operationRecord.result.balancesAfter.toToken = formatTokenAmount(newToTokenBalance, tokenDecimals)
+        operationRecord.result.balancesAfter.fromEth = formatEther(newFromEthBalance)
+
+        Logger.info(`  发送钱包Token余额: ${formatTokenAmount(newFromTokenBalance, tokenDecimals)} ${tokenSymbol}`)
+        Logger.info(`  接收钱包Token余额: ${formatTokenAmount(newToTokenBalance, tokenDecimals)} ${tokenSymbol}`)
+        Logger.info(`  发送钱包ETH余额: ${formatEther(newFromEthBalance)} ETH`)
+      } else {
+        Logger.error('❌ 交易失败')
+        operationRecord.result.error = 'Transaction failed - status 0'
+      }
+
+      Logger.info('手动Token转账任务完成!')
     } catch (error) {
       Logger.error('手动Token转账任务失败:', error)
 
-      // 释放任务锁
-      if (!force && taskId) {
-        await coordinator.releaseTaskLock(taskId, 'failed')
+      // 记录错误信息
+      operationRecord.result.error = error instanceof Error ? error.message : String(error)
+    }
+
+    // 保存操作记录（即使失败也要保存）
+    try {
+      const resultsDir = join(configDir, 'transfer-results')
+      if (!existsSync(resultsDir)) {
+        mkdirSync(resultsDir, { recursive: true })
       }
 
-      throw error
+      const resultPath = join(resultsDir, createTimestampFilename('manual-transfer-token'))
+      writeFileSync(resultPath, JSON.stringify(operationRecord, null, 2))
+      Logger.info(`操作记录已保存到: ${resultPath}`)
+    } catch (saveError) {
+      Logger.error('保存操作记录失败:', saveError)
     }
   })

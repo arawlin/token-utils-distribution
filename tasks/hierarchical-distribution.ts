@@ -1,7 +1,7 @@
-import { spawn } from 'child_process'
 import { ethers } from 'ethers'
 import { existsSync, readFileSync } from 'fs'
 import { task } from 'hardhat/config'
+import { HardhatRuntimeEnvironment } from 'hardhat/types'
 import { join } from 'path'
 import { DistributionSystemConfig, InstitutionNode } from '../types'
 import { formatTokenAmount, loadAllWallets, Logger } from './utils'
@@ -338,7 +338,7 @@ async function executeHierarchicalDistribution(
     delayMin: number
     delayMax: number
   },
-  hre: { network: { name: string } },
+  hre: HardhatRuntimeEnvironment,
 ): Promise<HierarchicalDistributionResult> {
   const results: HierarchicalDistributionResult = {
     success: true,
@@ -352,68 +352,63 @@ async function executeHierarchicalDistribution(
     Logger.info(`\n🔄 执行层级 ${plan.level}: ${plan.institutionName}`)
 
     try {
-      // 构建 batch-transfer-token 命令参数
-      const taskArgs = [
-        'batch-transfer-token',
-        '--config-dir',
-        batchTransferOptions.configDir,
-        '--token-address',
-        batchTransferOptions.tokenAddress,
-        '--from',
-        plan.fromAddress,
-        '--tos',
-        plan.toAddresses.join(','),
-        '--hold-ratio',
-        plan.holdRatio,
-        '--trailing-zeros',
-        batchTransferOptions.trailingZeros,
-        '--delay-min',
-        batchTransferOptions.delayMin,
-        '--delay-max',
-        batchTransferOptions.delayMax,
-        '--auto-fund-gas',
-        batchTransferOptions.autoFundGas,
-        '--network',
-        hre.network.name,
+      // 构建 batch-transfer-token 任务参数
+      const taskParams = {
+        configDir: batchTransferOptions.configDir,
+        tokenAddress: batchTransferOptions.tokenAddress,
+        from: plan.fromAddress,
+        tos: plan.toAddresses.join(','),
+        holdRatio: plan.holdRatio,
+        trailingZeros: batchTransferOptions.trailingZeros,
+        delayMin: batchTransferOptions.delayMin,
+        delayMax: batchTransferOptions.delayMax,
+        autoFundGas: batchTransferOptions.autoFundGas,
+        ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
+        ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
+      }
+
+      Logger.info(`执行任务: batch-transfer-token`)
+      Logger.info(`参数: ${JSON.stringify(taskParams, null, 2)}`)
+
+      // 构造等效的命令行参数用于手动调试
+      const cliArgs = [
+        'npx hardhat batch-transfer-token',
+        `--config-dir "${taskParams.configDir}"`,
+        `--token-address "${taskParams.tokenAddress}"`,
+        `--from "${taskParams.from}"`,
+        `--tos "${taskParams.tos}"`,
+        `--hold-ratio "${taskParams.holdRatio}"`,
+        `--trailing-zeros "${taskParams.trailingZeros}"`,
+        `--delay-min "${taskParams.delayMin}"`,
+        `--delay-max "${taskParams.delayMax}"`,
+        `--auto-fund-gas "${taskParams.autoFundGas}"`,
+        `--network ${hre.network.name}`,
       ]
 
-      // 添加可选参数
-      if (batchTransferOptions.precision) {
-        taskArgs.push('--precision', batchTransferOptions.precision)
+      // 添加可选参数到CLI
+      if (taskParams.precision) {
+        cliArgs.push(`--precision "${taskParams.precision}"`)
       }
-      if (batchTransferOptions.gasPrice) {
-        taskArgs.push('--gas-price', batchTransferOptions.gasPrice)
+      if (taskParams.gasPrice) {
+        cliArgs.push(`--gas-price "${taskParams.gasPrice}"`)
       }
 
-      Logger.info(`执行命令: npx hardhat ${taskArgs.join(' ')}`)
+      Logger.info(`📋 等效命令行参数 (可手动执行调试):`)
+      Logger.info(`${cliArgs.join(' \\\n  ')}`)
 
-      // 使用 spawn 执行命令并等待结果
-      const executionResult = await executeCommand('npx', ['hardhat', ...taskArgs])
+      // 直接运行 Hardhat 任务
+      await hre.run('batch-transfer-token', taskParams)
 
-      if (executionResult.success) {
-        Logger.info(`✅ 层级 ${plan.level} 分发成功`)
-        results.completedLevels++
-        results.results.push({
-          level: plan.level,
-          institutionName: plan.institutionName,
-          fromAddress: plan.fromAddress,
-          toAddressesCount: plan.toAddresses.length,
-          success: true,
-          actualAmount: plan.estimatedAmount,
-        })
-      } else {
-        Logger.error(`❌ 层级 ${plan.level} 分发失败: ${executionResult.error}`)
-        results.success = false
-        results.results.push({
-          level: plan.level,
-          institutionName: plan.institutionName,
-          fromAddress: plan.fromAddress,
-          toAddressesCount: plan.toAddresses.length,
-          success: false,
-          error: executionResult.error,
-        })
-        break // 如果某个层级失败，停止后续分发
-      }
+      Logger.info(`✅ 层级 ${plan.level} 分发成功`)
+      results.completedLevels++
+      results.results.push({
+        level: plan.level,
+        institutionName: plan.institutionName,
+        fromAddress: plan.fromAddress,
+        toAddressesCount: plan.toAddresses.length,
+        success: true,
+        actualAmount: plan.estimatedAmount,
+      })
 
       // 层级间延迟
       if (i < distributionPlan.length - 1) {
@@ -422,7 +417,7 @@ async function executeHierarchicalDistribution(
         await new Promise(resolve => setTimeout(resolve, delay))
       }
     } catch (error) {
-      Logger.error(`❌ 层级 ${plan.level} 执行异常:`, error)
+      Logger.error(`❌ 层级 ${plan.level} 分发失败:`, error)
       results.success = false
       results.results.push({
         level: plan.level,
@@ -432,54 +427,11 @@ async function executeHierarchicalDistribution(
         success: false,
         error: error instanceof Error ? error.message : String(error),
       })
-      break
+      break // 如果某个层级失败，停止后续分发
     }
   }
 
   return results
-}
-
-// 执行命令的辅助函数
-function executeCommand(command: string, args: string[]): Promise<{ success: boolean; error?: string }> {
-  return new Promise(resolve => {
-    const child = spawn(command, args, {
-      stdio: ['inherit', 'pipe', 'pipe'],
-      shell: true,
-    })
-
-    let stderr = ''
-
-    child.stdout?.on('data', data => {
-      const output = data.toString()
-      // 实时输出到控制台
-      process.stdout.write(output)
-    })
-
-    child.stderr?.on('data', data => {
-      const output = data.toString()
-      stderr += output
-      // 实时输出错误到控制台
-      process.stderr.write(output)
-    })
-
-    child.on('close', code => {
-      if (code === 0) {
-        resolve({ success: true })
-      } else {
-        resolve({
-          success: false,
-          error: stderr || `命令执行失败，退出码: ${code}`,
-        })
-      }
-    })
-
-    child.on('error', error => {
-      resolve({
-        success: false,
-        error: `命令启动失败: ${error.message}`,
-      })
-    })
-  })
 }
 
 export { executeHierarchicalDistribution, generateHierarchicalPlan }

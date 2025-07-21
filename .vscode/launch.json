@@ -169,6 +169,173 @@
         "group": "testing",
         "order": 1
       }
+    },
+    {
+      "name": "💰 Batch Transfer ETH",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "batch-transfer-eth",
+        "--network",
+        "localhost",
+        "--from",
+        "0x27d3aC9F8E99922aDdB2Db0A2e1cFde561d10fc3",
+        "--tos",
+        "0xd6Cc589328b8c01ad1cCD838A58A255ffe75c21f,0xf54AE5116372e07690dF76464F709aF7b9FC1bAC,0xa1187e132635e579D2Ba235c66eDA2c0DE092746",
+        "--amount-min",
+        "0.01",
+        "--amount-max",
+        "0.02",
+        "--batch-size",
+        "2"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "batch-operations",
+        "order": 1
+      }
+    },
+    {
+      "name": "🪙 Batch Transfer Token",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "batch-transfer-token",
+        "--network",
+        "localhost",
+        "--token-address",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "--from",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--tos",
+        "0x2C65148ad0885BEA5977089F165cBFA9975c5780,0xa1AB29439FFF3bd361056aCAc000DA7cf39d439d,0xe5aac51c962041004566f6216555172944A5F6fc",
+        "--amount-min",
+        "10000",
+        "--amount-max",
+        "20000",
+        "--batch-size",
+        "2",
+        "--trailing-zeros",
+        "2"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "batch-operations",
+        "order": 2
+      }
+    },
+    {
+      "name": "✋ Manual Transfer ETH",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "manual-transfer",
+        "--network",
+        "localhost",
+        "--from",
+        "0xdF3e18d64BC6A983f673Ab319CCaE4f1a57C7097",
+        "--to",
+        "0xe5aac51c962041004566f6216555172944A5F6fc",
+        "--amount",
+        "0.004",
+        "--force"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "manual-operations",
+        "order": 1
+      }
+    },
+    {
+      "name": "🪙 Manual Transfer Token",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "manual-transfer-token",
+        "--network",
+        "localhost",
+        "--from",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--to",
+        "0xb8D8a469bf323e8f92a55632F5C74D898b2eddc3",
+        "--amount",
+        "12300",
+        "--force"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "manual-operations",
+        "order": 2
+      }
+    },
+    {
+      "name": "📊 Wallet Balance Check",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "wallet-balance",
+        "--network",
+        "localhost",
+        "--concurrency",
+        "10",
+        "--detailed",
+        "--only-non-zero"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "monitoring",
+        "order": 1
+      }
     }
   ]
 }

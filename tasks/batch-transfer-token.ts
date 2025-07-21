@@ -30,25 +30,47 @@ interface TokenTransferPlan {
 
 task('batch-transfer-token', '批量转账Token到多个地址')
   .addOptionalParam('configDir', '配置目录', './.ws')
-  .addParam('tokenAddress', 'Token合约地址')
+  .addOptionalParam('tokenAddress', 'Token合约地址')
   .addParam('from', '发送地址')
   .addParam('tos', '接收地址列表，用逗号分隔 (例: 0x123...,0x456...)')
   .addParam('amountMin', '最小转账金额', '1')
   .addParam('amountMax', '最大转账金额', '100')
   .addOptionalParam('precision', '随机金额精度 (小数位数)')
-  .addOptionalParam('trailingZeros', '末尾零的最小数量 (例: 3 表示至少以000结尾)', '0')
+  .addOptionalParam('trailingZeros', '末尾零的最小数量 (例: 3 表示至少以000结尾)', '2')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
   .addOptionalParam('batchSize', '批处理大小（并发交易数量）', '5')
   .addOptionalParam('delayMin', '交易间最小延迟（毫秒）', '1000')
   .addOptionalParam('delayMax', '交易间最大延迟（毫秒）', '5000')
+  .addOptionalParam('autoFundGas', '当ETH余额不足时自动转账ETH', 'true')
+  .addOptionalParam('fundingSource', '资助钱包私钥或地址（默认使用配置文件中的交易所钱包）')
+  .addOptionalParam('fundingAmount', '自动转账的ETH数量，默认为所需gas费的1.5倍')
+  .addOptionalParam('fundingDelay', '转账后等待时间（毫秒）', '5000')
   .setAction(async (taskArgs, hre) => {
-    const { configDir, tokenAddress, from, tos, amountMin, amountMax, precision, trailingZeros, gasPrice, batchSize, delayMin, delayMax } =
-      taskArgs
+    const {
+      configDir,
+      tokenAddress,
+      from,
+      tos,
+      amountMin,
+      amountMax,
+      precision,
+      trailingZeros,
+      gasPrice,
+      batchSize,
+      delayMin,
+      delayMax,
+      autoFundGas,
+      fundingSource,
+      fundingAmount,
+      fundingDelay,
+    } = taskArgs
+
+    const tokenAddressReal = tokenAddress || process.env.TOKEN_ADDRESS
 
     try {
       Logger.info('开始执行批量转账Token任务')
       Logger.info(`网络: ${hre.network.name}`)
-      Logger.info(`Token地址: ${tokenAddress}`)
+      Logger.info(`Token地址: ${tokenAddressReal}`)
       Logger.info(`发送地址: ${from}`)
       Logger.info(`转账金额范围: ${amountMin} - ${amountMax}`)
       if (precision) {
@@ -60,7 +82,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       }
 
       // 验证Token合约地址
-      if (!ethers.isAddress(tokenAddress)) {
+      if (!ethers.isAddress(tokenAddressReal)) {
         Logger.error('无效的Token合约地址')
         return
       }
@@ -120,7 +142,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
       // 创建Token合约实例
       const tokenContract = new ethers.Contract(
-        tokenAddress,
+        tokenAddressReal,
         [
           'function balanceOf(address owner) view returns (uint256)',
           'function transfer(address to, uint256 amount) returns (bool)',
@@ -207,11 +229,103 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
       // 检查ETH余额是否足够支付gas费
       if (fromEthBalance < totalGasFee) {
-        Logger.error(`ETH余额不足支付gas费:`)
-        Logger.error(`  当前ETH余额: ${ethers.formatEther(fromEthBalance)} ETH`)
-        Logger.error(`  预估总gas费: ${ethers.formatEther(totalGasFee)} ETH`)
-        Logger.error(`  缺少: ${ethers.formatEther(totalGasFee - fromEthBalance)} ETH`)
-        return
+        Logger.warn(`ETH余额不足支付gas费:`)
+        Logger.warn(`  当前ETH余额: ${ethers.formatEther(fromEthBalance)} ETH`)
+        Logger.warn(`  预估总gas费: ${ethers.formatEther(totalGasFee)} ETH`)
+        Logger.warn(`  缺少: ${ethers.formatEther(totalGasFee - fromEthBalance)} ETH`)
+
+        // 检查是否启用自动转账
+        const autoFundEnabled = autoFundGas === 'true'
+        if (!autoFundEnabled) {
+          Logger.error('ETH余额不足，请手动转账或启用 --autoFundGas 参数')
+          return
+        }
+
+        Logger.info('🔄 启动自动转账ETH功能...')
+
+        // 计算需要转账的金额（预估gas费的1.5倍，确保有足够的余量）
+        const needAmount = totalGasFee - fromEthBalance
+        const transferAmount = fundingAmount ? ethers.parseEther(fundingAmount) : needAmount + (needAmount * 50n) / 100n // 默认增加50%余量
+
+        Logger.info(`计划转账: ${ethers.formatEther(transferAmount)} ETH`)
+
+        // 获取资助钱包
+        let fundingWallet: ethers.Wallet | null = null
+        if (!fundingSource) {
+          const fundingSourceConfig = process.env.FUNDING_WALLET_ADDRESS
+          if (!fundingSourceConfig) {
+            Logger.error('未提供资助钱包地址或私钥，请设置环境变量 FUNDING_WALLET_ADDRESS')
+            return
+          }
+
+          // 如果提供的是地址，尝试从已加载的钱包中查找
+          const sourceLowerCase = fundingSourceConfig.toLowerCase()
+          for (const [address, wallet] of allWallets) {
+            if (address === sourceLowerCase) {
+              fundingWallet = wallet
+              break
+            }
+          }
+          if (!fundingWallet) {
+            Logger.error(`未在配置的钱包中找到资助地址: ${fundingSourceConfig}`)
+            return
+          }
+        }
+
+        if (!fundingWallet) {
+          Logger.error('所有交易所钱包余额都不足，无法进行自动转账')
+          return
+        }
+
+        // 检查资助钱包余额
+        const fundingBalance = await provider.getBalance(fundingWallet.address)
+        if (fundingBalance < transferAmount) {
+          Logger.error(`资助钱包余额不足:`)
+          Logger.error(`  资助钱包余额: ${ethers.formatEther(fundingBalance)} ETH`)
+          Logger.error(`  需要转账: ${ethers.formatEther(transferAmount)} ETH`)
+          return
+        }
+
+        try {
+          Logger.info(`开始从 ${fundingWallet.address} 转账 ${ethers.formatEther(transferAmount)} ETH 到 ${fromWallet.address}`)
+
+          // 执行转账
+          const fundingTx = await fundingWallet.sendTransaction({
+            to: fromWallet.address,
+            value: transferAmount,
+            gasPrice: gasPriceWei,
+          })
+
+          Logger.info(`资助转账已提交: ${fundingTx.hash}`)
+          Logger.info('等待交易确认...')
+
+          const fundingReceipt = await fundingTx.wait()
+          if (fundingReceipt?.status === 1) {
+            Logger.info(`✅ 资助转账成功: ${fundingTx.hash}`)
+          } else {
+            Logger.error(`❌ 资助转账失败: ${fundingTx.hash}`)
+            return
+          }
+
+          // 等待一段时间确保余额更新
+          const waitTime = parseInt(fundingDelay || '10000')
+          Logger.info(`等待 ${waitTime}ms 确保余额更新...`)
+          await new Promise(resolve => setTimeout(resolve, waitTime))
+
+          // 重新检查余额
+          const newFromEthBalance = await provider.getBalance(fromWallet.address)
+          Logger.info(`资助后ETH余额: ${ethers.formatEther(newFromEthBalance)} ETH`)
+
+          if (newFromEthBalance < totalGasFee) {
+            Logger.error('资助后余额仍然不足，无法继续执行批量转账')
+            return
+          }
+
+          Logger.info('✅ ETH余额检查通过，继续执行批量转账')
+        } catch (error) {
+          Logger.error('自动转账ETH失败:', error)
+          return
+        }
       }
 
       Logger.info(`转账计划预览:`)
@@ -340,7 +454,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
         metadata: {
           timestamp: new Date().toISOString(),
           network: hre.network.name,
-          tokenAddress,
+          tokenAddress: tokenAddressReal,
           tokenName,
           tokenSymbol,
           tokenDecimals: Number(tokenDecimals),

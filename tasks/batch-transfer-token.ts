@@ -43,6 +43,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
   .addOptionalParam('fundingSource', '资助钱包私钥或地址（默认使用配置文件中的交易所钱包）')
   .addOptionalParam('fundingAmount', '自动转账的ETH数量，默认为所需gas费的1.5倍')
   .addOptionalParam('fundingDelay', '转账后等待时间（毫秒）', '5000')
+  .addOptionalParam('ethTransferDelay', '并发执行时ETH转账前等待延迟（毫秒）', '0')
   .setAction(async (taskArgs, hre) => {
     const {
       configDir,
@@ -59,6 +60,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       fundingSource,
       fundingAmount,
       fundingDelay,
+      ethTransferDelay,
     } = taskArgs
 
     const tokenAddressReal = tokenAddress || process.env.TOKEN_ADDRESS
@@ -444,6 +446,14 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
         try {
           Logger.info(`开始从 ${fundingWallet.address} 转账 ${ethers.formatEther(transferAmount)} ETH 到 ${fromWallet.address}`)
+
+          // 并发执行时添加随机延迟避免nonce冲突
+          const ethTransferDelayMs = parseInt(ethTransferDelay || '0')
+          if (ethTransferDelayMs > 0) {
+            const randomDelay = Math.random() * ethTransferDelayMs
+            Logger.info(`[并发控制] 等待 ${Math.round(randomDelay)}ms 后执行ETH转账，避免nonce冲突...`)
+            await new Promise(resolve => setTimeout(resolve, randomDelay))
+          }
 
           // 执行转账
           const fundingTx = await fundingWallet.sendTransaction({

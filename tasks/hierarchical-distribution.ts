@@ -41,6 +41,7 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
   .addOptionalParam('delayMin', '层级间最小延迟（毫秒）', '10000')
   .addOptionalParam('delayMax', '层级间最大延迟（毫秒）', '30000')
+  .addOptionalParam('ethTransferDelay', '并发执行时ETH转账等待延迟（毫秒）', '2000')
   .addOptionalParam('autoFundGas', '当ETH余额不足时自动转账ETH', 'true')
   .addOptionalParam('dryRun', '只显示分发计划不实际执行', 'false')
   .setAction(async (taskArgs, hre) => {
@@ -56,6 +57,7 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
       delayMin,
       delayMax,
       autoFundGas,
+      ethTransferDelay,
       dryRun,
     } = taskArgs
 
@@ -184,6 +186,7 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
           delayMin: '1000', // 单笔交易延迟
           delayMax: '5000', // 单笔交易延迟
           autoFundGas,
+          ethTransferDelay, // 传递ETH转账延迟参数
         },
         {
           delayMin: parseInt(delayMin),
@@ -333,6 +336,7 @@ async function executeHierarchicalDistribution(
     delayMin: string
     delayMax: string
     autoFundGas: string
+    ethTransferDelay?: string
   },
   levelDelayOptions: {
     delayMin: number
@@ -377,6 +381,10 @@ async function executeHierarchicalDistribution(
       }
 
       try {
+        // 为每个并发任务分配不同的ETH转账延迟时间，避免nonce冲突
+        const baseEthTransferDelay = parseInt(batchTransferOptions.ethTransferDelay || '2000')
+        const taskSpecificDelay = baseEthTransferDelay + planIndex * 1000 // 每个任务间隔1秒
+
         // 构建 batch-transfer-token 任务参数
         const taskParams = {
           configDir: batchTransferOptions.configDir,
@@ -388,6 +396,7 @@ async function executeHierarchicalDistribution(
           delayMin: batchTransferOptions.delayMin,
           delayMax: batchTransferOptions.delayMax,
           autoFundGas: batchTransferOptions.autoFundGas,
+          ethTransferDelay: taskSpecificDelay.toString(), // 为每个任务分配不同的延迟
           ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
           ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
         }
@@ -407,6 +416,7 @@ async function executeHierarchicalDistribution(
           `--delay-min "${taskParams.delayMin}"`,
           `--delay-max "${taskParams.delayMax}"`,
           `--auto-fund-gas "${taskParams.autoFundGas}"`,
+          `--eth-transfer-delay "${taskParams.ethTransferDelay}"`,
           `--network ${hre.network.name}`,
         ]
 

@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import type { Provider, Wallet } from 'ethers'
 import { ethers } from 'ethers'
+import { readFileSync } from 'fs'
 import { getInstitutionGroups } from '../config/institutions'
 import { DistributionSystemConfig, GasDistributionConfig, InstitutionNode } from '../types'
 
@@ -92,6 +93,16 @@ export async function generateInstitutionAddresses(masterSeed: string, node: Ins
 // 生成安全的主种子
 export function generateMasterSeed(): string {
   return ethers.hexlify(randomBytes(32))
+}
+
+// 从种子文件读取主种子
+export function loadMasterSeedFromFile(seedPath: string): string {
+  try {
+    const seedData = JSON.parse(readFileSync(seedPath, 'utf8'))
+    return seedData.masterSeed
+  } catch (error) {
+    throw new Error(`读取种子文件失败: ${error}`)
+  }
 }
 
 // 生成中间钱包地址和私钥

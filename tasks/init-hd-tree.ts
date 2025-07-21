@@ -4,7 +4,7 @@ import { join } from 'path'
 import { gasDistributionConfig, obfuscationConfig, tokenDistributionConfig } from '../config/distribution'
 import { institutionTreeConfig } from '../config/institutions'
 import { DistributionSystemConfig, InstitutionNode } from '../types'
-import { generateInstitutionAddresses, generateIntermediateWallets, generateMasterSeed, Logger } from './utils'
+import { generateInstitutionAddresses, generateIntermediateWallets, generateMasterSeed, loadMasterSeedFromFile, Logger } from './utils'
 
 task('init-hd-tree', '初始化HD钱包树结构')
   .addOptionalParam('outputDir', '输出目录', './.ws')
@@ -26,16 +26,25 @@ task('init-hd-tree', '初始化HD钱包树结构')
     const configPath = join(outputDir, 'distribution-config.json')
     const seedPath = join(outputDir, 'master-seed.json')
 
-    // 检查文件是否已存在
-    if (existsSync(configPath) || existsSync(seedPath)) {
-      Logger.warn('配置文件已存在')
-      return
-    }
+    // 检查配置文件是否已存在
+    // if (existsSync(configPath)) {
+    //   Logger.warn('配置文件已存在')
+    //   return
+    // }
 
     try {
-      // 生成主种子
-      Logger.info('生成主HD钱包种子...')
-      const masterSeed = generateMasterSeed()
+      let masterSeed: string
+
+      // 检查种子文件是否已存在
+      if (existsSync(seedPath)) {
+        Logger.info('种子文件已存在，使用现有种子...')
+        masterSeed = loadMasterSeedFromFile(seedPath)
+        Logger.info('成功加载现有主种子')
+      } else {
+        // 生成主种子
+        Logger.info('生成主HD钱包种子...')
+        masterSeed = generateMasterSeed()
+      }
 
       // 深拷贝机构树配置
       const institutionTree: InstitutionNode[] = JSON.parse(JSON.stringify(institutionTreeConfig))
@@ -80,16 +89,20 @@ task('init-hd-tree', '初始化HD钱包树结构')
         writeFileSync(configPath, JSON.stringify(publicConfig, null, 2))
         Logger.info(`公开配置已保存到: ${configPath}`)
 
-        // 保存加密的种子文件
-        const seedConfig = {
-          masterSeed: masterSeed,
-          createdAt: new Date().toISOString(),
-          networkName: hre.network.name,
-        }
+        // 如果种子文件不存在，则保存加密的种子文件
+        if (!existsSync(seedPath)) {
+          const seedConfig = {
+            masterSeed: masterSeed,
+            createdAt: new Date().toISOString(),
+            networkName: hre.network.name,
+          }
 
-        writeFileSync(seedPath, JSON.stringify(seedConfig, null, 2))
-        Logger.info(`主种子已保存到: ${seedPath}`)
-        Logger.warn('⚠️  请妥善保管种子文件，丢失后无法恢复！')
+          writeFileSync(seedPath, JSON.stringify(seedConfig, null, 2))
+          Logger.info(`主种子已保存到: ${seedPath}`)
+          Logger.warn('⚠️  请妥善保管种子文件，丢失后无法恢复！')
+        } else {
+          Logger.info(`使用现有种子文件: ${seedPath}`)
+        }
       }
 
       // 显示统计信息

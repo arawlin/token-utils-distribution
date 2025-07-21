@@ -2,8 +2,17 @@ import { ethers } from 'ethers'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
-import { DistributionSystemConfig } from '../types'
-import { chunkArray, createTimestampFilename, delay, determineWalletCategory, formatEther, loadAllWallets, Logger } from './utils'
+import { DistributionSystemConfig, InstitutionNode } from '../types'
+import {
+  chunkArray,
+  createTimestampFilename,
+  delay,
+  determineWalletCategory,
+  formatEther,
+  generateWalletFromPath,
+  loadAllWallets,
+  Logger,
+} from './utils'
 
 // ERC20 Token ABI (只需要 balanceOf 方法)
 const ERC20_ABI = [
@@ -18,6 +27,19 @@ interface WalletBalance {
   ethBalance: bigint
   tokenBalance: bigint
   category: string
+  institutionPath?: string
+  institutionName?: string
+  depth?: number
+}
+
+interface HierarchicalBalance {
+  institutionName: string
+  hdPath: string
+  depth: number
+  totalEth: bigint
+  totalToken: bigint
+  wallets: WalletBalance[]
+  children: HierarchicalBalance[]
 }
 
 interface BalanceSummary {
@@ -31,6 +53,327 @@ interface BalanceSummary {
       tokenBalance: bigint
     }
   }
+}
+
+// 构建层级余额结构
+function buildHierarchicalBalance(
+  institutionNodes: InstitutionNode[],
+  allWallets: Map<string, { address: string; privateKey: string }>,
+  balances: WalletBalance[],
+  masterSeed?: string,
+): HierarchicalBalance[] {
+  const hierarchicalBalances: HierarchicalBalance[] = []
+
+  function processNode(node: InstitutionNode, depth: number = 0): HierarchicalBalance {
+    const nodeBalance: HierarchicalBalance = {
+      institutionName: node.institutionName || `机构-${node.hdPath}`,
+      hdPath: node.hdPath,
+      depth,
+      totalEth: 0n,
+      totalToken: 0n,
+      wallets: [],
+      children: [],
+    }
+
+    // 查找属于这个机构的钱包地址
+    // 1. 如果节点已经有addresses字段，直接使用
+    if (node.addresses && node.addresses.length > 0) {
+      for (const address of node.addresses) {
+        const balance = balances.find(b => b.address.toLowerCase() === address.toLowerCase())
+        if (balance) {
+          nodeBalance.wallets.push({
+            ...balance,
+            institutionPath: node.hdPath,
+            institutionName: node.institutionName,
+            depth,
+          })
+          nodeBalance.totalEth += balance.ethBalance
+          nodeBalance.totalToken += balance.tokenBalance
+        }
+      }
+    } else {
+      // 2. 如果没有addresses字段，通过HD路径和addressCount查找
+      // 从allWallets中查找匹配该HD路径的钱包
+      const nodeWallets: WalletBalance[] = []
+
+      // 遍历所有钱包，查找属于当前机构的地址
+      for (const [address] of allWallets) {
+        // 检查这个地址是否在余额列表中
+        const balance = balances.find(b => b.address.toLowerCase() === address.toLowerCase())
+        if (balance) {
+          // 通过HD路径匹配来确定是否属于当前机构
+          // 这里我们需要一个更好的方式来匹配，暂时使用简单的启发式方法
+
+          // 如果我们能确定钱包属于这个机构，就添加它
+          // 注意：这需要更精确的实现，但作为临时解决方案
+          if (shouldWalletBelongToNode(address, node, allWallets, balances, masterSeed)) {
+            nodeWallets.push({
+              ...balance,
+              institutionPath: node.hdPath,
+              institutionName: node.institutionName,
+              depth,
+            })
+            nodeBalance.totalEth += balance.ethBalance
+            nodeBalance.totalToken += balance.tokenBalance
+          }
+        }
+      }
+
+      // 按addressCount限制添加的钱包数量
+      nodeBalance.wallets = nodeWallets.slice(0, node.addressCount)
+    }
+
+    // 递归处理子节点
+    for (const child of node.childNodes) {
+      const childBalance = processNode(child, depth + 1)
+      nodeBalance.children.push(childBalance)
+      nodeBalance.totalEth += childBalance.totalEth
+      nodeBalance.totalToken += childBalance.totalToken
+    }
+
+    return nodeBalance
+  }
+
+  // 处理机构树节点
+  for (const rootNode of institutionNodes) {
+    hierarchicalBalances.push(processNode(rootNode))
+  }
+
+  // 添加其他类型的钱包作为单独的顶层节点
+  const institutionWalletAddresses = new Set<string>()
+
+  // 收集所有机构钱包地址
+  function collectInstitutionAddresses(node: InstitutionNode) {
+    if (node.addresses) {
+      node.addresses.forEach(addr => institutionWalletAddresses.add(addr.toLowerCase()))
+    }
+    node.childNodes.forEach(collectInstitutionAddresses)
+  }
+  institutionNodes.forEach(collectInstitutionAddresses)
+
+  // 按类别分组其他钱包
+  const otherWalletsByCategory = new Map<string, WalletBalance[]>()
+
+  for (const balance of balances) {
+    const address = balance.address.toLowerCase()
+    // 如果不是机构钱包，按类别分组
+    if (!institutionWalletAddresses.has(address)) {
+      const category = balance.category
+      if (!otherWalletsByCategory.has(category)) {
+        otherWalletsByCategory.set(category, [])
+      }
+      otherWalletsByCategory.get(category)!.push(balance)
+    }
+  }
+
+  // 为每个类别创建顶层节点
+  for (const [category, categoryWallets] of otherWalletsByCategory) {
+    if (categoryWallets.length > 0) {
+      const categoryNode: HierarchicalBalance = {
+        institutionName: category,
+        hdPath: `category-${category}`,
+        depth: 0,
+        totalEth: 0n,
+        totalToken: 0n,
+        wallets: categoryWallets.map(wallet => ({
+          ...wallet,
+          institutionPath: `category-${category}`,
+          institutionName: category,
+          depth: 0,
+        })),
+        children: [],
+      }
+
+      // 计算总余额
+      for (const wallet of categoryWallets) {
+        categoryNode.totalEth += wallet.ethBalance
+        categoryNode.totalToken += wallet.tokenBalance
+      }
+
+      hierarchicalBalances.push(categoryNode)
+    }
+  }
+
+  return hierarchicalBalances
+}
+
+// 判断钱包是否属于特定机构节点的辅助函数
+function shouldWalletBelongToNode(
+  address: string,
+  node: InstitutionNode,
+  allWallets: Map<string, { address: string; privateKey: string }>,
+  balances: WalletBalance[],
+  masterSeed?: string,
+): boolean {
+  // 方法1：通过HD路径生成地址来匹配
+  if (masterSeed) {
+    for (let i = 0; i < node.addressCount; i++) {
+      try {
+        const generatedWallet = generateWalletFromPath(masterSeed, node.hdPath, i)
+        if (generatedWallet.address.toLowerCase() === address.toLowerCase()) {
+          return true
+        }
+      } catch {
+        // 忽略生成错误
+      }
+    }
+  }
+
+  // 方法2：通过余额记录中的category信息匹配
+  const balance = balances.find(b => b.address.toLowerCase() === address.toLowerCase())
+  if (balance && balance.category) {
+    const institutionName = node.institutionName || ''
+    if (
+      balance.category.includes(institutionName) ||
+      balance.category.includes(node.hdPath) ||
+      balance.category.includes(`depth-${node.depth}`)
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+// 按层级显示余额信息
+function displayHierarchicalBalances(hierarchicalBalances: HierarchicalBalance[], tokenSymbol: string, tokenDecimals: number) {
+  function displayNode(node: HierarchicalBalance, indent: string = '', isLast: boolean = true) {
+    const prefix = indent + (isLast ? '└── ' : '├── ')
+    const nextIndent = indent + (isLast ? '    ' : '│   ')
+
+    // 显示机构信息
+    console.log(`${prefix}${node.institutionName} (${node.hdPath}) [深度${node.depth}]`)
+    console.log(
+      `${nextIndent}机构汇总: ETH ${formatEther(node.totalEth)} | ${tokenSymbol} ${ethers.formatUnits(node.totalToken, tokenDecimals)}`,
+    )
+
+    // 显示该机构的钱包地址
+    if (node.wallets.length > 0) {
+      console.log(`${nextIndent}地址列表 (${node.wallets.length}个):`)
+      node.wallets.forEach((wallet, walletIndex) => {
+        const isLastWallet = walletIndex === node.wallets.length - 1 && node.children.length === 0
+        const walletPrefix = nextIndent + (isLastWallet ? '└── ' : '├── ')
+        console.log(
+          `${walletPrefix}${wallet.address} | ETH: ${formatEther(wallet.ethBalance).padStart(12)} | ${tokenSymbol}: ${ethers.formatUnits(wallet.tokenBalance, tokenDecimals).padStart(15)}`,
+        )
+      })
+    }
+
+    // 递归显示子机构
+    node.children.forEach((child, childIndex) => {
+      const isLastChild = childIndex === node.children.length - 1
+      displayNode(child, nextIndent, isLastChild)
+    })
+  }
+
+  console.log('\n=== 层级余额结构 ===')
+  hierarchicalBalances.forEach((rootNode, index) => {
+    const isLast = index === hierarchicalBalances.length - 1
+    displayNode(rootNode, '', isLast)
+    if (!isLast) {
+      console.log('')
+    }
+  })
+}
+
+// 生成层级格式的文本报告
+function generateHierarchicalReport(
+  hierarchicalBalances: HierarchicalBalance[],
+  tokenSymbol: string,
+  tokenDecimals: number,
+  summary: BalanceSummary,
+  balances: WalletBalance[],
+  network: string,
+  tokenInfo: { address: string; name: string; symbol: string; decimals: number },
+): string {
+  let report = ''
+
+  // 添加报告头部信息
+  report += '================================================================================\n'
+  report += '钱包余额统计报告\n'
+  report += '================================================================================\n\n'
+  report += `生成时间: ${new Date().toISOString()}\n`
+  report += `网络: ${network}\n`
+  report += `Token信息: ${tokenInfo.name} (${tokenInfo.symbol}), ${tokenInfo.decimals} decimals\n`
+  report += `Token地址: ${tokenInfo.address}\n\n`
+
+  // 添加汇总统计
+  report += '=== 余额汇总统计 ===\n'
+  report += `总钱包数: ${summary.totalWallets}\n`
+  report += `总ETH余额: ${formatEther(summary.totalEthBalance)} ETH\n`
+  report += `总${tokenSymbol}余额: ${ethers.formatUnits(summary.totalTokenBalance, tokenDecimals)} ${tokenSymbol}\n\n`
+
+  // 添加按类别统计
+  report += '=== 按类别统计 ===\n'
+  for (const [category, categoryData] of Object.entries(summary.categories)) {
+    report += `${category}:\n`
+    report += `  钱包数: ${categoryData.count}\n`
+    report += `  ETH余额: ${formatEther(categoryData.ethBalance)} ETH\n`
+    report += `  ${tokenSymbol}余额: ${ethers.formatUnits(categoryData.tokenBalance, tokenDecimals)} ${tokenSymbol}\n`
+  }
+  report += '\n'
+
+  // 添加层级余额结构
+  function addNodeToReport(node: HierarchicalBalance, indent: string = '', isLast: boolean = true): void {
+    const prefix = indent + (isLast ? '└── ' : '├── ')
+    const nextIndent = indent + (isLast ? '    ' : '│   ')
+
+    // 添加机构信息
+    report += `${prefix}${node.institutionName} (${node.hdPath}) [深度${node.depth}]\n`
+    report += `${nextIndent}机构汇总: ETH ${formatEther(node.totalEth)} | ${tokenSymbol} ${ethers.formatUnits(node.totalToken, tokenDecimals)}\n`
+
+    // 添加该机构的钱包地址
+    if (node.wallets.length > 0) {
+      report += `${nextIndent}地址列表 (${node.wallets.length}个):\n`
+      node.wallets.forEach((wallet, walletIndex) => {
+        const isLastWallet = walletIndex === node.wallets.length - 1 && node.children.length === 0
+        const walletPrefix = nextIndent + (isLastWallet ? '└── ' : '├── ')
+        report += `${walletPrefix}${wallet.address} | ETH: ${formatEther(wallet.ethBalance).padStart(12)} | ${tokenSymbol}: ${ethers.formatUnits(wallet.tokenBalance, tokenDecimals).padStart(15)}\n`
+      })
+    }
+
+    // 递归添加子机构
+    node.children.forEach((child, childIndex) => {
+      const isLastChild = childIndex === node.children.length - 1
+      addNodeToReport(child, nextIndent, isLastChild)
+    })
+  }
+
+  report += '=== 层级余额结构 ===\n'
+  hierarchicalBalances.forEach((rootNode, index) => {
+    const isLast = index === hierarchicalBalances.length - 1
+    addNodeToReport(rootNode, '', isLast)
+    if (!isLast) {
+      report += '\n'
+    }
+  })
+
+  // 添加特殊统计
+  const zeroEthWallets = balances.filter(b => b.ethBalance === 0n)
+  const zeroTokenWallets = balances.filter(b => b.tokenBalance === 0n)
+  const bothZeroWallets = balances.filter(b => b.ethBalance === 0n && b.tokenBalance === 0n)
+  const bothNonZeroWallets = balances.filter(b => b.ethBalance > 0n && b.tokenBalance > 0n)
+
+  report += '\n=== 特殊统计 ===\n'
+  report += `ETH余额为0的钱包: ${zeroEthWallets.length}\n`
+  report += `${tokenSymbol}余额为0的钱包: ${zeroTokenWallets.length}\n`
+  report += `ETH和${tokenSymbol}都为0的钱包: ${bothZeroWallets.length}\n`
+  report += `ETH和${tokenSymbol}都不为0的钱包: ${bothNonZeroWallets.length}\n`
+
+  // 添加平均值
+  if (summary.totalWallets > 0) {
+    const avgEth = summary.totalEthBalance / BigInt(summary.totalWallets)
+    const avgToken = summary.totalTokenBalance / BigInt(summary.totalWallets)
+    report += `平均ETH余额: ${formatEther(avgEth)} ETH\n`
+    report += `平均${tokenSymbol}余额: ${ethers.formatUnits(avgToken, tokenDecimals)} ${tokenSymbol}\n`
+  }
+
+  report += '\n共显示 ' + balances.length + ' 个地址\n\n'
+  report += '================================================================================\n'
+  report += '报告结束\n'
+  report += '================================================================================\n'
+
+  return report
 }
 
 task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
@@ -208,56 +551,49 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
       }
 
       // 显示汇总统计
-      Logger.info('\n=== 余额汇总统计 ===')
-      Logger.info(`总钱包数: ${summary.totalWallets}`)
-      Logger.info(`总ETH余额: ${formatEther(summary.totalEthBalance)} ETH`)
-      Logger.info(`总${tokenSymbol}余额: ${ethers.formatUnits(summary.totalTokenBalance, tokenDecimals)} ${tokenSymbol}`)
+      console.log('\n=== 余额汇总统计 ===')
+      console.log(`总钱包数: ${summary.totalWallets}`)
+      console.log(`总ETH余额: ${formatEther(summary.totalEthBalance)} ETH`)
+      console.log(`总${tokenSymbol}余额: ${ethers.formatUnits(summary.totalTokenBalance, tokenDecimals)} ${tokenSymbol}`)
 
       // 按类别显示统计
-      Logger.info('\n=== 按类别统计 ===')
+      console.log('\n=== 按类别统计 ===')
       for (const [category, categoryData] of Object.entries(summary.categories)) {
-        Logger.info(`${category}:`)
-        Logger.info(`  钱包数: ${categoryData.count}`)
-        Logger.info(`  ETH余额: ${formatEther(categoryData.ethBalance)} ETH`)
-        Logger.info(`  ${tokenSymbol}余额: ${ethers.formatUnits(categoryData.tokenBalance, tokenDecimals)} ${tokenSymbol}`)
+        console.log(`${category}:`)
+        console.log(`  钱包数: ${categoryData.count}`)
+        console.log(`  ETH余额: ${formatEther(categoryData.ethBalance)} ETH`)
+        console.log(`  ${tokenSymbol}余额: ${ethers.formatUnits(categoryData.tokenBalance, tokenDecimals)} ${tokenSymbol}`)
       }
 
-      // 显示详细余额 - 默认显示，除非指定了 summaryOnly
+      // 显示详细余额 - 使用层级结构显示
       if (!summaryOnly && balances.length > 0) {
-        Logger.info('\n=== 所有地址详细余额信息 (按Token余额降序) ===')
+        // 构建层级余额结构
+        const hierarchicalBalances = buildHierarchicalBalance(config.institutionTree, allWallets, balances, masterSeed)
 
-        balances.forEach((balance, index) => {
-          const ethAmount = formatEther(balance.ethBalance)
-          const tokenAmount = ethers.formatUnits(balance.tokenBalance, tokenDecimals)
-          const indexStr = `${(index + 1).toString().padStart(3)}. `
+        // 使用层级显示
+        displayHierarchicalBalances(hierarchicalBalances, tokenSymbol, tokenDecimals)
 
-          // 格式：序号. 地址 | ETH: 数量 | TOKEN: 数量 | 类别
-          Logger.info(
-            `${indexStr}${balance.address} | ETH: ${ethAmount.padStart(12)} | ${tokenSymbol}: ${tokenAmount.padStart(15)} | ${balance.category}`,
-          )
-        })
-
-        Logger.info(`\n共显示 ${balances.length} 个地址`)
+        console.log(`\n共显示 ${balances.length} 个地址`)
       }
 
       // 显示特殊统计
-      Logger.info('\n=== 特殊统计 ===')
+      console.log('\n=== 特殊统计 ===')
       const zeroEthWallets = balances.filter(b => b.ethBalance === 0n)
       const zeroTokenWallets = balances.filter(b => b.tokenBalance === 0n)
       const bothZeroWallets = balances.filter(b => b.ethBalance === 0n && b.tokenBalance === 0n)
       const bothNonZeroWallets = balances.filter(b => b.ethBalance > 0n && b.tokenBalance > 0n)
 
-      Logger.info(`ETH余额为0的钱包: ${zeroEthWallets.length}`)
-      Logger.info(`${tokenSymbol}余额为0的钱包: ${zeroTokenWallets.length}`)
-      Logger.info(`ETH和${tokenSymbol}都为0的钱包: ${bothZeroWallets.length}`)
-      Logger.info(`ETH和${tokenSymbol}都不为0的钱包: ${bothNonZeroWallets.length}`)
+      console.log(`ETH余额为0的钱包: ${zeroEthWallets.length}`)
+      console.log(`${tokenSymbol}余额为0的钱包: ${zeroTokenWallets.length}`)
+      console.log(`ETH和${tokenSymbol}都为0的钱包: ${bothZeroWallets.length}`)
+      console.log(`ETH和${tokenSymbol}都不为0的钱包: ${bothNonZeroWallets.length}`)
 
       // 计算平均值
       if (summary.totalWallets > 0) {
         const avgEth = summary.totalEthBalance / BigInt(summary.totalWallets)
         const avgToken = summary.totalTokenBalance / BigInt(summary.totalWallets)
-        Logger.info(`平均ETH余额: ${formatEther(avgEth)} ETH`)
-        Logger.info(`平均${tokenSymbol}余额: ${ethers.formatUnits(avgToken, tokenDecimals)} ${tokenSymbol}`)
+        console.log(`平均ETH余额: ${formatEther(avgEth)} ETH`)
+        console.log(`平均${tokenSymbol}余额: ${ethers.formatUnits(avgToken, tokenDecimals)} ${tokenSymbol}`)
       }
 
       Logger.info('\n余额统计完成!')
@@ -265,7 +601,7 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
       // 保存结果到文件 (除非指定了 noSave)
       if (!noSave) {
         const resultDir = join(configDir, 'balance-results')
-        const resultFileName = createTimestampFilename('balance-report')
+        const resultFileName = createTimestampFilename('balance-report', '.txt') // 改为.txt格式
         const resultFilePath = join(resultDir, resultFileName)
 
         try {
@@ -274,75 +610,28 @@ task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
             mkdirSync(resultDir, { recursive: true })
           }
 
-          // 准备要保存的数据
-          const resultData = {
-            timestamp: new Date().toISOString(),
-            network: hre.network.name,
-            tokenInfo: {
+          // 构建层级余额结构（用于生成报告）
+          const hierarchicalBalances = buildHierarchicalBalance(config.institutionTree, allWallets, balances, masterSeed)
+
+          // 生成层级格式的文本报告
+          const reportContent = generateHierarchicalReport(
+            hierarchicalBalances,
+            tokenSymbol,
+            tokenDecimals,
+            summary,
+            balances,
+            hre.network.name,
+            {
               address: finalTokenAddress,
               name: tokenName,
               symbol: tokenSymbol,
               decimals: tokenDecimals,
             },
-            summary: {
-              totalWallets: summary.totalWallets,
-              totalEthBalance: summary.totalEthBalance.toString(),
-              totalTokenBalance: summary.totalTokenBalance.toString(),
-              categories: Object.fromEntries(
-                Object.entries(summary.categories).map(([key, value]) => [
-                  key,
-                  {
-                    count: value.count,
-                    ethBalance: value.ethBalance.toString(),
-                    tokenBalance: value.tokenBalance.toString(),
-                  },
-                ]),
-              ),
-            },
-            specialStats: {
-              zeroEthWallets: balances.filter(b => b.ethBalance === 0n).length,
-              zeroTokenWallets: balances.filter(b => b.tokenBalance === 0n).length,
-              bothZeroWallets: balances.filter(b => b.ethBalance === 0n && b.tokenBalance === 0n).length,
-              bothNonZeroWallets: balances.filter(b => b.ethBalance > 0n && b.tokenBalance > 0n).length,
-            },
-            averages:
-              summary.totalWallets > 0
-                ? {
-                    avgEthBalance: (summary.totalEthBalance / BigInt(summary.totalWallets)).toString(),
-                    avgTokenBalance: (summary.totalTokenBalance / BigInt(summary.totalWallets)).toString(),
-                  }
-                : null,
-            detailedBalances: balances.map(balance => ({
-              address: balance.address,
-              ethBalance: balance.ethBalance.toString(),
-              tokenBalance: balance.tokenBalance.toString(),
-              category: balance.category,
-              ethBalanceFormatted: formatEther(balance.ethBalance),
-              tokenBalanceFormatted: ethers.formatUnits(balance.tokenBalance, tokenDecimals),
-            })),
-            queryConfig: {
-              concurrency: parseInt(concurrency),
-              delayMs: parseInt(delayMs),
-              onlyNonZero,
-              sortByEth,
-              configDir,
-              outputDir: resultDir,
-            },
-          }
-
-          // 写入文件
-          writeFileSync(
-            resultFilePath,
-            JSON.stringify(
-              resultData,
-              (key, value) => {
-                // 自定义序列化函数处理BigInt
-                return typeof value === 'bigint' ? value.toString() : value
-              },
-              2,
-            ),
-            'utf8',
           )
+
+          // 写入文本文件
+          writeFileSync(resultFilePath, reportContent, 'utf8')
+
           Logger.info(`\n✅ 余额统计结果已保存到: ${resultFilePath}`)
           Logger.info(`📁 结果目录: ${resultDir}`)
           Logger.info(`📄 文件名: ${resultFileName}`)

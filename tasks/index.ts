@@ -1,4 +1,5 @@
 // 导入所有任务模块，让 Hardhat 能够发现它们
+import './auto-consolidate-tokens'
 import './batch-transfer-eth'
 import './batch-transfer-token'
 import './distribute-gas'

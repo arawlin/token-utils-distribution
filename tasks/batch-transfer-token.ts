@@ -229,14 +229,14 @@ task('batch-transfer-token', '批量转账Token到多个地址')
             amountInEther = Math.round(amountInEther * multiplier) / multiplier
           }
 
-          // 应用末尾零控制
+          // 应用末尾零控制（包括最后一个地址）
           if (trailingZeros !== undefined && trailingZeros > 0) {
             const divisor = Math.pow(10, trailingZeros)
             // 确保末尾至少有指定数量的零
             amountInEther = Math.floor(amountInEther / divisor) * divisor
 
-            // 如果结果为0，至少保证一个有效的数值（除了最后一个地址）
-            if (amountInEther === 0 && index < addresses.length - 1) {
+            // 如果结果为0，至少保证一个有效的数值
+            if (amountInEther === 0) {
               amountInEther = divisor
             }
           }
@@ -269,9 +269,25 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           const difference = totalAmount - actualDistributed
 
           if (difference > 0n) {
-            // 如果有剩余金额，加到最后一个有效地址上
+            // 如果有剩余金额，需要按照 trailing-zeros 规则添加到最后一个地址
             const lastPlan = validPlans[validPlans.length - 1]
-            lastPlan.amountBigInt += difference
+            let newAmount = lastPlan.amountBigInt + difference
+
+            // 如果设置了 trailing-zeros，需要重新调整以符合规则
+            if (trailingZeros !== undefined && trailingZeros > 0) {
+              let newAmountInEther = parseFloat(ethers.formatUnits(newAmount, decimals))
+              const divisor = Math.pow(10, trailingZeros)
+              newAmountInEther = Math.floor(newAmountInEther / divisor) * divisor
+
+              // 如果调整后金额为0，设置为最小有效值
+              if (newAmountInEther === 0) {
+                newAmountInEther = divisor
+              }
+
+              newAmount = ethers.parseUnits(newAmountInEther.toString(), decimals)
+            }
+
+            lastPlan.amountBigInt = newAmount
             lastPlan.amount = formatTokenAmount(lastPlan.amountBigInt, decimals)
           } else if (difference < 0n) {
             // 如果超额分配，需要从各个地址减少金额
@@ -282,9 +298,26 @@ task('batch-transfer-token', '批量转账Token到多个地址')
             for (let i = validPlans.length - 1; i >= 0 && remainingExcess > 0n; i--) {
               const plan = validPlans[i]
               const canReduce = plan.amountBigInt > remainingExcess ? remainingExcess : plan.amountBigInt
-              plan.amountBigInt -= canReduce
+              let newAmount = plan.amountBigInt - canReduce
+
+              // 如果设置了 trailing-zeros，需要重新调整以符合规则
+              if (trailingZeros !== undefined && trailingZeros > 0 && newAmount > 0n) {
+                let newAmountInEther = parseFloat(ethers.formatUnits(newAmount, decimals))
+                const divisor = Math.pow(10, trailingZeros)
+                newAmountInEther = Math.floor(newAmountInEther / divisor) * divisor
+
+                // 如果调整后金额为0，设置为最小有效值
+                if (newAmountInEther === 0) {
+                  newAmountInEther = divisor
+                }
+
+                newAmount = ethers.parseUnits(newAmountInEther.toString(), decimals)
+              }
+
+              const actualReduction = plan.amountBigInt - newAmount
+              plan.amountBigInt = newAmount
               plan.amount = formatTokenAmount(plan.amountBigInt, decimals)
-              remainingExcess -= canReduce
+              remainingExcess -= actualReduction
             }
 
             // 再次过滤掉可能变成0的计划

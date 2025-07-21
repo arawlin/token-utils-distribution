@@ -244,19 +244,19 @@ async function generateHierarchicalPlan(
       return // 超过最大层级，停止遍历
     }
 
-    // 如果有子节点且配置了分发，需要分发
-    if (node.childNodes.length > 0 && node.retentionConfig && node.retentionConfig.distributorAddressIndex >= 0) {
-      // 从node.addresses中找到分发者地址
-      const distributorIndex = node.retentionConfig.distributorAddressIndex
-      const nodeAddresses = node.addresses || []
-      const distributorAddress = nodeAddresses[distributorIndex]
+    // 如果有子节点且有地址，随机选择分发者进行分发
+    if (node.childNodes.length > 0 && node.addresses && node.addresses.length > 0) {
+      const nodeAddresses = node.addresses
 
-      if (!distributorAddress) {
-        Logger.warn(
-          `机构 ${node.institutionName} (${node.hdPath}) 的分发者地址未找到. 地址数量: ${nodeAddresses.length}, 分发者索引: ${distributorIndex}`,
-        )
-        return
-      }
+      // 随机选择1-3个地址作为分发者（根据可用地址数量决定）
+      const maxDistributors = Math.min(3, Math.max(1, Math.floor(nodeAddresses.length / 2)))
+      const distributorCount = Math.floor(Math.random() * maxDistributors) + 1
+
+      // 随机选择分发者地址
+      const shuffledAddresses = [...nodeAddresses].sort(() => Math.random() - 0.5)
+      const distributorAddresses = shuffledAddresses.slice(0, distributorCount)
+
+      Logger.info(`机构 ${node.institutionName} (${node.hdPath}) 随机选择了 ${distributorCount} 个分发者`)
 
       // 收集所有子机构的所有接收地址
       const childAddresses: string[] = []
@@ -268,33 +268,46 @@ async function generateHierarchicalPlan(
         }
       }
 
-      if (childAddresses.length > 0) {
-        // 计算保留比例
-        const retentionPercentage = node.retentionConfig.percentage
-        const holdRatio = (retentionPercentage / 100).toFixed(3)
+      if (childAddresses.length > 0 && distributorAddresses.length > 0) {
+        // 为每个分发者创建一个分发计划
+        for (let i = 0; i < distributorAddresses.length; i++) {
+          const distributorAddress = distributorAddresses[i]
 
-        // 获取当前余额用于估算
-        let estimatedAmount: string | undefined
-        try {
-          const balance = await tokenContract.balanceOf(distributorAddress)
-          if (balance > 0n) {
-            const availableAmount = balance - (balance * BigInt(retentionPercentage * 100)) / 10000n
-            if (availableAmount > 0n) {
-              estimatedAmount = formatTokenAmount(availableAmount, tokenDecimals)
+          // 随机保留比例
+          const retentionPercentage = Math.floor(Math.random() * 3) + 1
+          const holdRatio = (retentionPercentage / 100).toFixed(3)
+
+          // 获取当前余额用于估算
+          let estimatedAmount: string | undefined
+          try {
+            const balance = await tokenContract.balanceOf(distributorAddress)
+            if (balance > 0n) {
+              const availableAmount = balance - (balance * BigInt(retentionPercentage * 100)) / 10000n
+              if (availableAmount > 0n) {
+                estimatedAmount = formatTokenAmount(availableAmount, tokenDecimals)
+              }
             }
+          } catch {
+            // 忽略余额查询错误
           }
-        } catch {
-          // 忽略余额查询错误
-        }
 
-        plan.push({
-          level: currentLevel,
-          fromAddress: distributorAddress,
-          toAddresses: childAddresses,
-          institutionName: node.institutionName || `Level ${currentLevel}`,
-          holdRatio,
-          estimatedAmount,
-        })
+          // 为每个分发者分配子地址（平均分配或随机分配）
+          const addressesPerDistributor = Math.ceil(childAddresses.length / distributorAddresses.length)
+          const startIndex = i * addressesPerDistributor
+          const endIndex = Math.min(startIndex + addressesPerDistributor, childAddresses.length)
+          const assignedAddresses = childAddresses.slice(startIndex, endIndex)
+
+          if (assignedAddresses.length > 0) {
+            plan.push({
+              level: currentLevel,
+              fromAddress: distributorAddress,
+              toAddresses: assignedAddresses,
+              institutionName: `${node.institutionName || `Level ${currentLevel}`} - 分发者${i + 1}`,
+              holdRatio,
+              estimatedAmount,
+            })
+          }
+        }
       }
     }
 

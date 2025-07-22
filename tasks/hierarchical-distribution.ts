@@ -394,6 +394,55 @@ async function executeHierarchicalDistribution(
     const levelModeInfo = isDryRun ? ' (DRY RUN - 仅显示参数)' : ''
     Logger.info(`\n🔄 开始执行层级 ${currentLevel} (${plansInLevel.length} 个并发任务)${levelModeInfo}`)
 
+    // 先打印所有任务的 CLI 参数
+    Logger.info(`\n📋 [层级${currentLevel}] 所有任务的等效命令行参数:`)
+    plansInLevel.forEach((plan, planIndex) => {
+      const baseEthTransferDelay = parseInt(batchTransferOptions.ethTransferDelay || '2000')
+      const taskSpecificDelay = baseEthTransferDelay + planIndex * 2000
+
+      const taskParams = {
+        configDir: batchTransferOptions.configDir,
+        tokenAddress: batchTransferOptions.tokenAddress,
+        from: plan.fromAddress,
+        tos: plan.toAddresses.join(','),
+        holdRatio: plan.holdRatio,
+        trailingZeros: batchTransferOptions.trailingZeros,
+        delayMin: batchTransferOptions.delayMin,
+        delayMax: batchTransferOptions.delayMax,
+        autoFundGas: batchTransferOptions.autoFundGas,
+        ethTransferDelay: taskSpecificDelay.toString(),
+        ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
+        ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
+      }
+
+      const cliArgs = [
+        'npx hardhat batch-transfer-token',
+        `--config-dir "${taskParams.configDir}"`,
+        `--token-address "${taskParams.tokenAddress}"`,
+        `--from "${taskParams.from}"`,
+        `--tos "${taskParams.tos}"`,
+        `--hold-ratio "${taskParams.holdRatio}"`,
+        `--trailing-zeros "${taskParams.trailingZeros}"`,
+        `--delay-min "${taskParams.delayMin}"`,
+        `--delay-max "${taskParams.delayMax}"`,
+        `--auto-fund-gas "${taskParams.autoFundGas}"`,
+        `--eth-transfer-delay "${taskParams.ethTransferDelay}"`,
+        `--network ${hre.network.name}`,
+      ]
+
+      if (taskParams.precision) {
+        cliArgs.push(`--precision "${taskParams.precision}"`)
+      }
+      if (taskParams.gasPrice) {
+        cliArgs.push(`--gas-price "${taskParams.gasPrice}"`)
+      }
+
+      Logger.info(`\n任务${planIndex + 1}: ${plan.institutionName}`)
+      Logger.info(`${cliArgs.join(' \\\n  ')}`)
+    })
+
+    Logger.info(`\n🚀 [层级${currentLevel}] 即将开始执行 ${plansInLevel.length} 个并发任务...`)
+
     // 创建所有任务的 Promise 数组
     const levelTasks = plansInLevel.map(async (plan, planIndex) => {
       const taskResult = {
@@ -424,35 +473,7 @@ async function executeHierarchicalDistribution(
           ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
         }
 
-        Logger.info(`\n🔄 [层级${currentLevel}-任务${planIndex + 1}] ${plan.institutionName}`)
-        // Logger.info(`参数: ${JSON.stringify(taskParams, null, 2)}`)
-
-        // 构造等效的命令行参数用于手动调试
-        const cliArgs = [
-          'npx hardhat batch-transfer-token',
-          `--config-dir "${taskParams.configDir}"`,
-          `--token-address "${taskParams.tokenAddress}"`,
-          `--from "${taskParams.from}"`,
-          `--tos "${taskParams.tos}"`,
-          `--hold-ratio "${taskParams.holdRatio}"`,
-          `--trailing-zeros "${taskParams.trailingZeros}"`,
-          `--delay-min "${taskParams.delayMin}"`,
-          `--delay-max "${taskParams.delayMax}"`,
-          `--auto-fund-gas "${taskParams.autoFundGas}"`,
-          `--eth-transfer-delay "${taskParams.ethTransferDelay}"`,
-          `--network ${hre.network.name}`,
-        ]
-
-        // 添加可选参数到CLI
-        if (taskParams.precision) {
-          cliArgs.push(`--precision "${taskParams.precision}"`)
-        }
-        if (taskParams.gasPrice) {
-          cliArgs.push(`--gas-price "${taskParams.gasPrice}"`)
-        }
-
-        Logger.info(`📋 [层级${currentLevel}-任务${planIndex + 1}] 等效命令行参数:`)
-        Logger.info(`${cliArgs.join(' \\\n  ')}`)
+        Logger.info(`\n🔄 [层级${currentLevel}-任务${planIndex + 1}] 开始执行: ${plan.institutionName}`)
 
         if (isDryRun) {
           Logger.info(`🔍 [层级${currentLevel}-任务${planIndex + 1}] DRY RUN 模式 - 跳过实际执行`)

@@ -406,7 +406,7 @@ async function executeHierarchicalDistribution(
         }
 
         Logger.info(`\n🔄 [层级${currentLevel}-任务${planIndex + 1}] ${plan.institutionName}`)
-        Logger.info(`参数: ${JSON.stringify(taskParams, null, 2)}`)
+        // Logger.info(`参数: ${JSON.stringify(taskParams, null, 2)}`)
 
         // 构造等效的命令行参数用于手动调试
         const cliArgs = [

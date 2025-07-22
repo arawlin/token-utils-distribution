@@ -39,8 +39,8 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
   .addOptionalParam('precision', '随机金额精度 (小数位数)')
   .addOptionalParam('trailingZeros', '末尾零的最小数量', '2')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
-  .addOptionalParam('delayMin', '层级间最小延迟（毫秒）', '10000')
-  .addOptionalParam('delayMax', '层级间最大延迟（毫秒）', '30000')
+  .addOptionalParam('delayMin', '层级间最小延迟（毫秒）', '1000')
+  .addOptionalParam('delayMax', '层级间最大延迟（毫秒）', '3000')
   .addOptionalParam('ethTransferDelay', '并发执行时ETH转账等待延迟（毫秒）', '2000')
   .addOptionalParam('autoFundGas', '当ETH余额不足时自动转账ETH', 'true')
   .addOptionalParam('dryRun', '只显示分发计划不实际执行', 'false')
@@ -183,8 +183,8 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
           precision,
           trailingZeros,
           gasPrice,
-          delayMin: '1000', // 单笔交易延迟
-          delayMax: '5000', // 单笔交易延迟
+          delayMin,
+          delayMax,
           autoFundGas,
           ethTransferDelay, // 传递ETH转账延迟参数
         },
@@ -252,7 +252,7 @@ async function generateHierarchicalPlan(
       const nodeAddresses = node.addresses
 
       // 随机选择1-3个地址作为分发者（根据可用地址数量决定）
-      const maxDistributors = Math.min(3, Math.max(1, Math.floor(nodeAddresses.length / 2)))
+      const maxDistributors = Math.min(5, Math.max(1, Math.floor(nodeAddresses.length / 2)))
       const distributorCount = Math.floor(Math.random() * maxDistributors) + 1
 
       // 随机选择分发者地址

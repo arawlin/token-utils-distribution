@@ -26,8 +26,8 @@ interface ConsolidationPlan {
   to: string
   amount: bigint
   formattedAmount: string
-  needsGas: boolean
-  gasAmount?: bigint
+  needsGas: boolean // 保留以兼容现有代码结构
+  gasAmount?: bigint // 保留以兼容现有代码结构
 }
 
 task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定地址')
@@ -38,9 +38,10 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
   .addOptionalParam('delayMin', '交易间最小延迟（毫秒）', '1000')
   .addOptionalParam('delayMax', '交易间最大延迟（毫秒）', '5000')
+  .addOptionalParam('batchSize', '每批次并发执行的转账数量', '10')
+  .addOptionalParam('batchDelay', '批次间延迟时间（毫秒）', '2000')
   .addOptionalParam('autoFundGas', '当ETH余额不足时自动转账ETH', 'true')
-  .addOptionalParam('fundingSource', '资助钱包私钥或地址（默认使用目标地址中ETH余额最高的）', process.env.FUNDING_WALLET_ADDRESS)
-  .addOptionalParam('fundingMultiplier', '资助金额倍数（gas费的倍数）', '1.2')
+  .addOptionalParam('fundingSource', '资助钱包地址（传递给batch-transfer-token）', process.env.FUNDING_WALLET_ADDRESS)
   .addOptionalParam('fundingDelay', '转账后等待时间（毫秒）', '5000')
   .addOptionalParam('dryRun', '是否为试运行模式（不执行实际交易）', 'false')
   .setAction(async (taskArgs, hre) => {
@@ -52,9 +53,10 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
       gasPrice,
       delayMin,
       delayMax,
+      batchSize,
+      batchDelay,
       autoFundGas,
       fundingSource,
-      fundingMultiplier,
       fundingDelay,
       dryRun,
     } = taskArgs
@@ -124,23 +126,21 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
 
       // 过滤出需要归集的钱包（排除目标地址）
       const sourceWallets = new Map<string, ethers.Wallet>()
-      const targetWallets = new Map<string, ethers.Wallet>()
 
       for (const [address, wallet] of allWallets) {
-        if (targetAddresses.includes(address)) {
-          targetWallets.set(address, wallet)
-        } else {
+        if (!targetAddresses.includes(address)) {
           sourceWallets.set(address, wallet)
         }
       }
 
       Logger.info(`源钱包数量: ${sourceWallets.size}`)
-      Logger.info(`目标钱包数量: ${targetWallets.size}`)
+      Logger.info(`目标归集地址数量: ${targetAddresses.length}`)
 
-      if (targetWallets.size === 0) {
-        Logger.error('目标地址中没有找到对应的钱包')
-        return
-      }
+      // 验证目标地址是否有效（不需要在钱包列表中）
+      Logger.info('目标归集地址列表:')
+      targetAddresses.forEach((address: string, index: number) => {
+        Logger.info(`  ${index + 1}. ${address}`)
+      })
 
       // 创建Token合约实例
       const tokenContract = new ethers.Contract(
@@ -205,30 +205,18 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
 
       // 生成归集计划
       const consolidationPlans: ConsolidationPlan[] = []
-      const gasLimit = 70000n // ERC20 transfer gas limit
       let targetIndex = 0
 
       for (const [address, balance] of balances) {
         const targetAddress = targetAddresses[targetIndex % targetAddresses.length]
-
-        // 检查ETH余额是否足够支付gas费
-        const ethBalance = await provider.getBalance(address)
-        const requiredGasFee = gasLimit * gasPriceWei
-        const needsGas = ethBalance < requiredGasFee
-
-        let gasAmount: bigint | undefined
-        if (needsGas) {
-          const multiplier = parseFloat(fundingMultiplier)
-          gasAmount = (requiredGasFee * BigInt(Math.ceil(multiplier * 100))) / 100n
-        }
 
         consolidationPlans.push({
           from: address,
           to: targetAddress,
           amount: balance,
           formattedAmount: formatTokenAmount(balance, tokenDecimals),
-          needsGas,
-          gasAmount,
+          needsGas: false, // 由 batch-transfer-token 任务自动处理
+          gasAmount: undefined,
         })
 
         targetIndex++
@@ -239,42 +227,13 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
       // 显示归集计划预览
       Logger.info(`归集计划预览:`)
       consolidationPlans.forEach((plan, index) => {
-        const gasInfo = plan.needsGas ? ` (需要Gas: ${ethers.formatEther(plan.gasAmount!)} ETH)` : ''
-        Logger.info(
-          `  ${index + 1}. ${plan.from.slice(0, 10)}... → ${plan.to.slice(0, 10)}... : ${plan.formattedAmount} ${tokenSymbol}${gasInfo}`,
-        )
+        Logger.info(`  ${index + 1}. ${plan.from.slice(0, 10)}... → ${plan.to.slice(0, 10)}... : ${plan.formattedAmount} ${tokenSymbol}`)
       })
 
       if (isDryRun) {
         Logger.info('试运行模式，不执行实际交易')
         return
       }
-
-      // 获取资助钱包（用于gas费转账）
-      let fundingWallet: ethers.Wallet | undefined = undefined
-      if (autoFundGas === 'true') {
-        if (!fundingSource) {
-          Logger.error('未提供资助钱包地址或私钥，请设置环境变量 FUNDING_WALLET_ADDRESS')
-          return
-        }
-
-        // 如果提供的是地址，尝试从已加载的钱包中查找
-        const sourceLowerCase = fundingSource.toLowerCase()
-        for (const [address, wallet] of allWallets) {
-          if (address === sourceLowerCase) {
-            fundingWallet = wallet
-            break
-          }
-        }
-      }
-      if (!fundingWallet) {
-        Logger.error(`未在配置的钱包中找到资助地址: ${fundingSource}`)
-        return
-      }
-
-      const fundingBalance = await provider.getBalance(fundingWallet.address)
-      Logger.info(`使用资助钱包: ${fundingWallet.address}`)
-      Logger.info(`资助钱包ETH余额: ${ethers.formatEther(fundingBalance)} ETH`)
 
       // 初始化结果统计
       const results: ConsolidationResult = {
@@ -286,150 +245,167 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
 
       const delayMinNum = parseInt(delayMin)
       const delayMaxNum = parseInt(delayMax)
-      const fundingDelayNum = parseInt(fundingDelay)
+      const batchSizeNum = parseInt(batchSize)
+      const batchDelayNum = parseInt(batchDelay)
 
-      // 执行归集
+      // 执行归集 - 使用 batch-transfer-token 任务
       Logger.info('开始执行Token归集...')
 
-      for (let i = 0; i < consolidationPlans.length; i++) {
-        const plan = consolidationPlans[i]
-        const sourceWallet = sourceWallets.get(plan.from)!
+      // 按目标地址分组归集计划
+      const plansByTarget = new Map<string, ConsolidationPlan[]>()
+      for (const plan of consolidationPlans) {
+        const targetKey = plan.to
+        if (!plansByTarget.has(targetKey)) {
+          plansByTarget.set(targetKey, [])
+        }
+        plansByTarget.get(targetKey)!.push(plan)
+      }
 
-        Logger.info(`\n=== 执行第 ${i + 1}/${consolidationPlans.length} 个归集计划 ===`)
-        Logger.info(`从 ${plan.from.slice(0, 10)}... 归集 ${plan.formattedAmount} ${tokenSymbol} 到 ${plan.to.slice(0, 10)}...`)
+      Logger.info(`将执行 ${plansByTarget.size} 个批次归集到不同目标地址`)
 
-        try {
-          // 1. 如果需要gas费，先转账ETH
-          if (plan.needsGas) {
-            if (!fundingWallet) {
-              Logger.warn(`跳过 ${plan.from.slice(0, 10)}... 的归集，因为需要gas费但没有资助钱包`)
+      let batchIndex = 0
+      for (const [targetAddress, targetPlans] of plansByTarget) {
+        batchIndex++
+        Logger.info(`\n=== 执行第 ${batchIndex}/${plansByTarget.size} 个批次归集 ===`)
+        Logger.info(`目标地址: ${targetAddress}`)
+        Logger.info(`批次包含 ${targetPlans.length} 个源钱包`)
+
+        // 将目标地址的转账计划按 batchSize 分为多个子批次
+        const subBatches: ConsolidationPlan[][] = []
+        for (let i = 0; i < targetPlans.length; i += batchSizeNum) {
+          subBatches.push(targetPlans.slice(i, i + batchSizeNum))
+        }
+
+        Logger.info(`将分为 ${subBatches.length} 个子批次执行，每批次最多 ${batchSizeNum} 个并发转账`)
+
+        let totalBatchSuccessCount = 0
+        let totalBatchFailureCount = 0
+
+        // 逐个子批次执行
+        for (let subBatchIndex = 0; subBatchIndex < subBatches.length; subBatchIndex++) {
+          const currentSubBatch = subBatches[subBatchIndex]
+          const subBatchNum = subBatchIndex + 1
+
+          Logger.info(`\n🔄 [批次${batchIndex}-子批次${subBatchNum}] 开始执行 ${currentSubBatch.length} 个并发转账...`)
+
+          // 为当前子批次创建并发任务
+          const batchPromises = currentSubBatch.map(async (plan, planIndexInSubBatch) => {
+            const globalPlanIndex = subBatchIndex * batchSizeNum + planIndexInSubBatch
+            Logger.info(`\n--- [批次${batchIndex}-子批次${subBatchNum}-转账${planIndexInSubBatch + 1}] 准备归集 ---`)
+            Logger.info(`从 ${plan.from.slice(0, 10)}... 归集 ${plan.formattedAmount} ${tokenSymbol} 到 ${plan.to.slice(0, 10)}...`)
+
+            try {
+              // 调用 batch-transfer-token 任务执行单个转账，让它自动处理 gas 费
+              await hre.run('batch-transfer-token', {
+                configDir,
+                tokenAddress: tokenAddressReal,
+                from: plan.from,
+                tos: plan.to, // 单个目标地址
+                holdRatio: '0', // 转移所有Token，不保留
+                gasPrice: gasPrice || '',
+                delayMin: delayMin, // 使用用户指定的延迟
+                delayMax: delayMax,
+                autoFundGas: autoFundGas, // 传递给 batch-transfer-token
+                fundingSource: fundingSource || '',
+                fundingDelay: fundingDelay,
+                ethTransferDelay: (planIndexInSubBatch * 1000).toString(), // 为并发任务分配不同的ETH转账延迟
+              })
+
+              Logger.info(
+                `✅ [批次${batchIndex}-子批次${subBatchNum}-转账${planIndexInSubBatch + 1}] Token归集成功: ${plan.from.slice(0, 10)}... → ${plan.to.slice(0, 10)}...`,
+              )
+
+              return {
+                success: true,
+                plan,
+                planIndex: globalPlanIndex,
+              }
+            } catch (error) {
+              Logger.error(`❌ [批次${batchIndex}-子批次${subBatchNum}-转账${planIndexInSubBatch + 1}] Token归集失败:`, error)
+
+              return {
+                success: false,
+                plan,
+                planIndex: globalPlanIndex,
+                error: error instanceof Error ? error.message : String(error),
+              }
+            }
+          })
+
+          // 等待当前子批次的所有转账完成
+          const subBatchResults = await Promise.allSettled(batchPromises)
+
+          // 处理子批次结果
+          let subBatchSuccessCount = 0
+          let subBatchFailureCount = 0
+
+          subBatchResults.forEach((result, index) => {
+            if (result.status === 'fulfilled') {
+              const taskResult = result.value
+              if (taskResult.success) {
+                subBatchSuccessCount++
+                totalBatchSuccessCount++
+                results.success++
+                results.totalCollected += taskResult.plan.amount
+
+                results.transactions.push({
+                  from: taskResult.plan.from,
+                  to: taskResult.plan.to,
+                  amount: taskResult.plan.formattedAmount,
+                  status: 'success',
+                  type: 'token',
+                })
+              } else {
+                subBatchFailureCount++
+                totalBatchFailureCount++
+                results.failed++
+
+                results.transactions.push({
+                  from: taskResult.plan.from,
+                  to: taskResult.plan.to,
+                  amount: taskResult.plan.formattedAmount,
+                  error: taskResult.error,
+                  status: 'failed',
+                  type: 'token',
+                })
+              }
+            } else {
+              subBatchFailureCount++
+              totalBatchFailureCount++
               results.failed++
+              const plan = currentSubBatch[index]
+
               results.transactions.push({
                 from: plan.from,
                 to: plan.to,
                 amount: plan.formattedAmount,
-                error: '需要gas费但没有资助钱包',
+                error: `任务执行异常: ${result.reason}`,
                 status: 'failed',
                 type: 'token',
               })
-              continue
             }
-
-            Logger.info(`需要转账Gas费: ${ethers.formatEther(plan.gasAmount!)} ETH`)
-
-            try {
-              const fundingTx = await fundingWallet.sendTransaction({
-                to: plan.from,
-                value: plan.gasAmount!,
-                gasPrice: gasPriceWei,
-              })
-
-              Logger.info(`Gas费转账已提交: ${fundingTx.hash}`)
-
-              const fundingReceipt = await fundingTx.wait()
-              if (fundingReceipt?.status === 1) {
-                Logger.info(`✅ Gas费转账成功`)
-
-                results.transactions.push({
-                  from: fundingWallet.address,
-                  to: plan.from,
-                  amount: ethers.formatEther(plan.gasAmount!),
-                  txHash: fundingTx.hash,
-                  status: 'success',
-                  type: 'gas',
-                })
-
-                // 等待余额更新
-                Logger.info(`等待 ${fundingDelayNum}ms 确保余额更新...`)
-                await new Promise(resolve => setTimeout(resolve, fundingDelayNum))
-              } else {
-                throw new Error('Gas费转账失败')
-              }
-            } catch (error) {
-              Logger.error(`❌ Gas费转账失败:`, error)
-
-              results.transactions.push({
-                from: fundingWallet.address,
-                to: plan.from,
-                amount: ethers.formatEther(plan.gasAmount!),
-                error: error instanceof Error ? error.message : String(error),
-                status: 'failed',
-                type: 'gas',
-              })
-
-              // 跳过这个归集计划
-              results.failed++
-              continue
-            }
-          }
-
-          // 2. 执行Token转账
-          const nonce = await provider.getTransactionCount(plan.from, 'pending')
-
-          Logger.info(`执行Token转账... (nonce: ${nonce})`)
-
-          const tx = await sourceWallet.sendTransaction({
-            to: tokenAddressReal,
-            data: tokenContract.interface.encodeFunctionData('transfer', [plan.to, plan.amount]),
-            gasPrice: gasPriceWei,
-            gasLimit: gasLimit,
-            nonce: nonce,
           })
 
-          Logger.info(`Token转账已提交: ${tx.hash}`)
+          Logger.info(
+            `\n📊 [批次${batchIndex}-子批次${subBatchNum}] 执行完成: 成功 ${subBatchSuccessCount}/${currentSubBatch.length}, 失败 ${subBatchFailureCount}`,
+          )
 
-          // 等待确认
-          const receipt = await tx.wait()
-
-          const transaction = {
-            from: plan.from,
-            to: plan.to,
-            amount: plan.formattedAmount,
-            txHash: tx.hash,
-            status: receipt?.status === 1 ? ('success' as const) : ('failed' as const),
-            error: undefined as string | undefined,
-            type: 'token' as const,
+          // 子批次间延迟（除了最后一个子批次）
+          if (subBatchIndex < subBatches.length - 1) {
+            Logger.info(`等待 ${batchDelayNum}ms 后执行下一个子批次...`)
+            await new Promise(resolve => setTimeout(resolve, batchDelayNum))
           }
+        }
 
-          if (receipt?.status === 1) {
-            Logger.info(`✅ Token归集成功: ${tx.hash}`)
-            results.success++
-            results.totalCollected += plan.amount
-          } else {
-            Logger.error(`❌ Token归集失败: ${tx.hash}`)
-            transaction.error = '交易执行失败'
-            results.failed++
-          }
+        Logger.info(
+          `\n📊 批次 ${batchIndex} 总体执行完成: 成功 ${totalBatchSuccessCount}/${targetPlans.length}, 失败 ${totalBatchFailureCount}`,
+        )
 
-          results.transactions.push(transaction)
-
-          // 交易间延迟
-          if (i < consolidationPlans.length - 1) {
-            const delay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
-            Logger.info(`等待 ${Math.round(delay)}ms 后执行下一个归集...`)
-            await new Promise(resolve => setTimeout(resolve, delay))
-          }
-        } catch (error) {
-          Logger.error(`❌ 归集失败:`, error)
-
-          const transaction = {
-            from: plan.from,
-            to: plan.to,
-            amount: plan.formattedAmount,
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed' as const,
-            type: 'token' as const,
-          }
-
-          results.transactions.push(transaction)
-          results.failed++
-
-          // 即使失败也要延迟
-          if (i < consolidationPlans.length - 1) {
-            const delay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
-            Logger.info(`失败后等待 ${Math.round(delay)}ms 再继续...`)
-            await new Promise(resolve => setTimeout(resolve, delay))
-          }
+        // 批次间延迟
+        if (batchIndex < plansByTarget.size) {
+          const batchDelay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum * 2 // 批次间稍长延迟
+          Logger.info(`批次 ${batchIndex} 完成，等待 ${Math.round(batchDelay)}ms 后执行下一批次...`)
+          await new Promise(resolve => setTimeout(resolve, batchDelay))
         }
       }
 

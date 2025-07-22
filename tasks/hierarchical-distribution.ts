@@ -64,6 +64,19 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
     const tokenAddressReal = tokenAddress || process.env.TOKEN_ADDRESS
 
     try {
+      // 检查是否已经有 Logger 初始化，如果没有则初始化任务专用的日志文件
+      const existingLogFile = Logger.getLogFile()
+      const shouldCreateTaskLog = !existingLogFile || existingLogFile.includes('hardhat-')
+
+      if (shouldCreateTaskLog) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '_').split('.')[0]
+        const logFilename = `hierarchical-distribution-${hre.network.name}-inst${institutionIndex}-${timestamp}.log`
+        Logger.setLogFile(logFilename)
+        Logger.info(`📝 创建任务专用日志文件: ${Logger.getLogFile()}`)
+      } else {
+        Logger.info(`📝 使用现有日志文件: ${existingLogFile}`)
+      }
+
       Logger.info('🌳 开始执行层级分发Token任务')
       Logger.info(`网络: ${hre.network.name}`)
       Logger.info(`Token地址: ${tokenAddressReal}`)
@@ -215,8 +228,14 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
       } else {
         Logger.error('❌ 层级分发部分失败，请检查错误信息')
       }
+
+      // 显示日志文件位置
+      Logger.info(`📝 详细日志已保存到: ${Logger.getLogFile()}`)
     } catch (error) {
       Logger.error('层级分发任务失败:', error)
+      if (Logger.getLogFile()) {
+        Logger.info(`📝 错误日志已保存到: ${Logger.getLogFile()}`)
+      }
       throw error
     }
   })

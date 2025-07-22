@@ -70,7 +70,19 @@ task('batch-transfer-token', '批量转账Token到多个地址')
     const tokenAddressReal = tokenAddress || process.env.TOKEN_ADDRESS
 
     try {
-      Logger.info('开始执行顺序转账Token任务')
+      // 检查是否已经有 Logger 初始化，batch-transfer-token 通常作为子任务调用，
+      // 所以优先使用父任务的日志文件，只在独立执行时创建专用日志
+      const existingLogFile = Logger.getLogFile()
+      const shouldCreateTaskLog = !existingLogFile || existingLogFile.includes('hardhat-')
+
+      if (shouldCreateTaskLog) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '_').split('.')[0]
+        const logFilename = `batch-transfer-token-${hre.network.name}-${timestamp}.log`
+        Logger.setLogFile(logFilename)
+        Logger.info(`📝 创建任务专用日志文件: ${Logger.getLogFile()}`)
+      }
+
+      Logger.info('🔄 开始执行顺序转账Token任务')
       Logger.info(`网络: ${hre.network.name}`)
       Logger.info(`Token地址: ${tokenAddressReal}`)
       Logger.info(`发送地址: ${from}`)
@@ -656,11 +668,19 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       }
 
       writeFileSync(resultPath, JSON.stringify(resultData, null, 2))
-      Logger.info(`结果已保存到: ${resultPath}`)
+      Logger.info(`📄 结果已保存到: ${resultPath}`)
 
-      Logger.info('顺序转账Token任务完成!')
+      Logger.info('✅ 顺序转账Token任务完成!')
+
+      // 显示日志文件位置（仅在独立执行时显示，避免子任务重复显示）
+      if (Logger.getLogFile() && Logger.getLogFile().includes('batch-transfer-token-')) {
+        Logger.info(`📝 详细日志已保存到: ${Logger.getLogFile()}`)
+      }
     } catch (error) {
-      Logger.error('顺序转账Token任务失败:', error)
+      Logger.error('❌ 顺序转账Token任务失败:', error)
+      if (Logger.getLogFile() && Logger.getLogFile().includes('batch-transfer-token-')) {
+        Logger.info(`📝 错误日志已保存到: ${Logger.getLogFile()}`)
+      }
       throw error
     }
   })

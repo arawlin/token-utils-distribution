@@ -72,6 +72,19 @@ task('leaf-shuffle-transfer', '在所有机构叶子节点之间进行随机Toke
     const tokenAddressReal = tokenAddress || process.env.TOKEN_ADDRESS
 
     try {
+      // 检查是否已经有 Logger 初始化，如果没有则初始化任务专用的日志文件
+      const existingLogFile = Logger.getLogFile()
+      const shouldCreateTaskLog = !existingLogFile || existingLogFile.includes('hardhat-')
+
+      if (shouldCreateTaskLog) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '_').split('.')[0]
+        const logFilename = `leaf-shuffle-transfer-${hre.network.name}-${timestamp}.log`
+        Logger.setLogFile(logFilename)
+        Logger.info(`📝 创建任务专用日志文件: ${Logger.getLogFile()}`)
+      } else {
+        Logger.info(`📝 使用现有日志文件: ${existingLogFile}`)
+      }
+
       Logger.info('🔀 开始执行叶子节点乱序转账任务')
       Logger.info(`网络: ${hre.network.name}`)
       Logger.info(`Token地址: ${tokenAddressReal}`)
@@ -222,8 +235,16 @@ task('leaf-shuffle-transfer', '在所有机构叶子节点之间进行随机Toke
       } else {
         Logger.error('❌ 叶子节点乱序转账部分失败，请检查错误信息')
       }
+
+      // 显示日志文件位置
+      if (Logger.getLogFile()) {
+        Logger.info(`📝 详细日志已保存到: ${Logger.getLogFile()}`)
+      }
     } catch (error) {
-      Logger.error('叶子节点乱序转账任务失败:', error)
+      Logger.error('❌ 叶子节点乱序转账任务失败:', error)
+      if (Logger.getLogFile()) {
+        Logger.info(`📝 错误日志已保存到: ${Logger.getLogFile()}`)
+      }
       throw error
     }
   })

@@ -65,7 +65,20 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
     const isDryRun = dryRun === 'true'
 
     try {
-      Logger.info('开始执行Token自动归集任务')
+      // 检查是否已经有 Logger 初始化，如果没有则初始化任务专用的日志文件
+      const existingLogFile = Logger.getLogFile()
+      const shouldCreateTaskLog = !existingLogFile || existingLogFile.includes('hardhat-')
+
+      if (shouldCreateTaskLog) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '_').split('.')[0]
+        const logFilename = `auto-consolidate-tokens-${hre.network.name}-${timestamp}.log`
+        Logger.setLogFile(logFilename)
+        Logger.info(`📝 创建任务专用日志文件: ${Logger.getLogFile()}`)
+      } else {
+        Logger.info(`📝 使用现有日志文件: ${existingLogFile}`)
+      }
+
+      Logger.info('🔄 开始执行Token自动归集任务')
       Logger.info(`网络: ${hre.network.name}`)
       Logger.info(`Token地址: ${tokenAddressReal}`)
       Logger.info(`试运行模式: ${isDryRun ? '是' : '否'}`)
@@ -453,11 +466,19 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
       }
 
       writeFileSync(resultPath, JSON.stringify(resultData, null, 2))
-      Logger.info(`结果已保存到: ${resultPath}`)
+      Logger.info(`📄 结果已保存到: ${resultPath}`)
 
-      Logger.info('Token自动归集任务完成!')
+      Logger.info('🎉 Token自动归集任务完成!')
+
+      // 显示日志文件位置
+      if (Logger.getLogFile()) {
+        Logger.info(`📝 详细日志已保存到: ${Logger.getLogFile()}`)
+      }
     } catch (error) {
-      Logger.error('Token自动归集任务失败:', error)
+      Logger.error('❌ Token自动归集任务失败:', error)
+      if (Logger.getLogFile()) {
+        Logger.info(`📝 错误日志已保存到: ${Logger.getLogFile()}`)
+      }
       throw error
     }
   })

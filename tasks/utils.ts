@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto'
 import type { Provider, Wallet } from 'ethers'
 import { ethers } from 'ethers'
-import { readFileSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
+import { join } from 'path'
 import { getInstitutionGroups } from '../config/institutions'
 import { DistributionSystemConfig, GasDistributionConfig, InstitutionNode } from '../types'
 
@@ -251,33 +252,78 @@ export function chunkArray<T>(array: T[], chunkSize: number): T[][] {
 // 日志工具
 export class Logger {
   private static logLevel: 'debug' | 'info' | 'warn' | 'error' = 'info'
+  private static logDir = 'logs'
+  private static logFile = ''
 
   static setLogLevel(level: 'debug' | 'info' | 'warn' | 'error') {
     this.logLevel = level
   }
 
+  static isInitialized(): boolean {
+    return this.logFile !== ''
+  }
+
+  static setLogFile(filename?: string) {
+    // 确保 logs 目录存在
+    if (!existsSync(this.logDir)) {
+      mkdirSync(this.logDir, { recursive: true })
+    }
+
+    // 如果没有指定文件名，使用时间戳生成
+    if (!filename) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '_').split('.')[0]
+      filename = `hierarchical-distribution-${timestamp}.log`
+    }
+
+    this.logFile = join(this.logDir, filename)
+  }
+
+  private static writeToFile(level: string, message: string, data?: unknown) {
+    if (!this.logFile) {
+      // 如果没有设置日志文件，自动初始化
+      this.setLogFile()
+    }
+
+    const timestamp = new Date().toISOString()
+    const logEntry = `[${level}] ${timestamp}: ${message}${data ? ` ${typeof data === 'string' ? data : JSON.stringify(data)}` : ''}\n`
+
+    try {
+      appendFileSync(this.logFile, logEntry)
+    } catch (error) {
+      console.error('写入日志文件失败:', error)
+    }
+  }
+
   static debug(message: string, data?: unknown) {
     if (this.shouldLog('debug')) {
       console.log(`[DEBUG] ${new Date().toISOString()}: ${message}`, data || '')
+      this.writeToFile('DEBUG', message, data)
     }
   }
 
   static info(message: string, data?: unknown) {
     if (this.shouldLog('info')) {
       console.log(`[INFO] ${new Date().toISOString()}: ${message}`, data || '')
+      this.writeToFile('INFO', message, data)
     }
   }
 
   static warn(message: string, data?: unknown) {
     if (this.shouldLog('warn')) {
       console.warn(`[WARN] ${new Date().toISOString()}: ${message}`, data || '')
+      this.writeToFile('WARN', message, data)
     }
   }
 
   static error(message: string, error?: unknown) {
     if (this.shouldLog('error')) {
       console.error(`[ERROR] ${new Date().toISOString()}: ${message}`, error || '')
+      this.writeToFile('ERROR', message, error)
     }
+  }
+
+  static getLogFile(): string {
+    return this.logFile
   }
 
   private static shouldLog(level: string): boolean {

@@ -37,11 +37,11 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
   .addOptionalParam('startFromLevel', '从哪个层级开始分发 (0=主机构层级)', '0')
   .addOptionalParam('maxLevel', '最大分发层级 (-1=分发到最深层)', '-1')
   .addOptionalParam('precision', '随机金额精度 (小数位数)')
-  .addOptionalParam('trailingZeros', '末尾零的最小数量', '2')
+  .addOptionalParam('trailingZeros', '末尾零的最小数量', '1')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
   .addOptionalParam('delayMin', '层级间最小延迟（毫秒）', '1000')
   .addOptionalParam('delayMax', '层级间最大延迟（毫秒）', '3000')
-  .addOptionalParam('ethTransferDelay', '并发执行时ETH转账等待延迟（毫秒）', '2000')
+  .addOptionalParam('ethTransferDelay', '并发执行时ETH转账等待延迟（毫秒）', '1000')
   .addOptionalParam('autoFundGas', '当ETH余额不足时自动转账ETH', 'true')
   .addOptionalParam('dryRun', '只显示分发计划不实际执行', 'false')
   .setAction(async (taskArgs, hre) => {
@@ -383,7 +383,7 @@ async function executeHierarchicalDistribution(
       try {
         // 为每个并发任务分配不同的ETH转账延迟时间，避免nonce冲突
         const baseEthTransferDelay = parseInt(batchTransferOptions.ethTransferDelay || '2000')
-        const taskSpecificDelay = baseEthTransferDelay + planIndex * 1000 // 每个任务间隔1秒
+        const taskSpecificDelay = baseEthTransferDelay + planIndex * 2000
 
         // 构建 batch-transfer-token 任务参数
         const taskParams = {

@@ -371,6 +371,51 @@
         "group": "hierarchical-distribution",
         "order": 2
       }
+    },
+    {
+      "name": "🔀 Leaf Shuffle Transfer (LIVE)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "leaf-shuffle-transfer",
+        "--network",
+        "localhost",
+        "--transfer-count",
+        "3",
+        "--min-hold-ratio",
+        "0.01",
+        "--max-hold-ratio",
+        "0.12",
+        "--min-balance",
+        "50",
+        "--batch-size",
+        "8",
+        "--batch-delay",
+        "2000",
+        "--delay-min",
+        "1500",
+        "--delay-max",
+        "4000",
+        "--trailing-zeros",
+        "2",
+        "--auto-fund-gas",
+        "true"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "leaf-shuffle",
+        "order": 2
+      }
     }
   ]
 }

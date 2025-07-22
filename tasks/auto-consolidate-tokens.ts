@@ -34,7 +34,7 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
   .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('tokenAddress', 'Token合约地址')
   .addParam('targets', '目标归集地址列表，用逗号分隔 (例: 0x123...,0x456...)')
-  .addOptionalParam('minBalance', '最小归集余额阈值（低于此值不归集）', '0.01')
+  .addOptionalParam('minBalance', '最小归集余额阈值（低于此值不归集）', '10')
   .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
   .addOptionalParam('delayMin', '交易间最小延迟（毫秒）', '1000')
   .addOptionalParam('delayMax', '交易间最大延迟（毫秒）', '5000')

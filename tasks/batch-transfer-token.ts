@@ -481,11 +481,17 @@ task('batch-transfer-token', '批量转账Token到多个地址')
             await new Promise(resolve => setTimeout(resolve, randomDelay))
           }
 
+          // 从协调器获取nonce避免并发冲突
+          // 出问题，可以注释掉，让 provider 获取
+          const fundingNonce = await coordinator.getNextNonce(fundingWallet.address, provider)
+          Logger.info(`[并发控制] 使用协调器分配的nonce: ${fundingNonce}`)
+
           // 执行转账
           const fundingTx = await fundingWallet.sendTransaction({
             to: fromWallet.address,
             value: transferAmount,
             gasPrice: gasPriceWei,
+            nonce: fundingNonce,
           })
 
           Logger.info(`资助转账已提交: ${fundingTx.hash}`)

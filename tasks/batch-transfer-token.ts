@@ -45,7 +45,8 @@ task('batch-transfer-token', '批量转账Token到多个地址')
     '资助钱包地址列表，用逗号分隔 (例: 0x123...,0x456...)，随机选择一个进行转账',
     process.env.FUNDING_WALLET_ADDRESS,
   )
-  .addOptionalParam('fundingAmount', '自动转账的ETH数量，默认为所需gas费的1.5倍')
+  .addOptionalParam('fundingAmount', '自动转账的ETH数量，默认为所需gas费的指定倍数')
+  .addOptionalParam('fundingMultiplier', '自动转账ETH的扩大倍数', '1.5')
   .addOptionalParam('fundingDelay', '转账后等待时间（毫秒）', '5000')
   .addOptionalParam('ethTransferDelay', '并发执行时ETH转账前等待延迟（毫秒）', '0')
   .setAction(async (taskArgs, hre) => {
@@ -63,6 +64,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       autoFundGas,
       fundingSource,
       fundingAmount,
+      fundingMultiplier,
       fundingDelay,
       ethTransferDelay,
     } = taskArgs
@@ -396,9 +398,12 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
         Logger.info('🔄 启动自动转账ETH功能...')
 
-        // 计算需要转账的金额（预估gas费的1.5倍，确保有足够的余量）
+        // 计算需要转账的金额（预估gas费的指定倍数，确保有足够的余量）
         const needAmount = totalGasFee - fromEthBalance
-        const baseTransferAmount = fundingAmount ? ethers.parseEther(fundingAmount) : needAmount + (needAmount * 50n) / 100n // 默认增加50%余量
+        const multiplier = parseFloat(fundingMultiplier || '1.5')
+        const baseTransferAmount = fundingAmount
+          ? ethers.parseEther(fundingAmount)
+          : needAmount + (needAmount * BigInt(Math.floor((multiplier - 1) * 100))) / 100n
 
         // 将转账金额格式化为2位有效数字
         const formatTo2SignificantDigits = (value: bigint): bigint => {
@@ -427,7 +432,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
         const transferAmount = formatTo2SignificantDigits(baseTransferAmount)
 
-        Logger.info(`计划转账: ${ethers.formatEther(transferAmount)} ETH (2位有效数字)`)
+        Logger.info(`计划转账: ${ethers.formatEther(transferAmount)} ETH (${multiplier}倍系数，2位有效数字)`)
 
         // 获取资助钱包
         let fundingWallet: ethers.Wallet | null = null

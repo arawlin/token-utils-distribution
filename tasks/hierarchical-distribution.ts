@@ -387,15 +387,14 @@ async function executeHierarchicalDistribution(
     `📊 分发层级分组${executionMode}: ${sortedLevels.map(level => `Level ${level} (${levelGroups.get(level)!.length}个任务)`).join(', ')}`,
   )
 
-  for (let levelIndex = 0; levelIndex < sortedLevels.length; levelIndex++) {
-    const currentLevel = sortedLevels[levelIndex]
+  // 提前打印所有层级的所有任务 CLI 参数
+  Logger.info(`\n📋 所有层级任务的等效命令行参数预览:`)
+  Logger.info(`====================================================`)
+
+  sortedLevels.forEach(currentLevel => {
     const plansInLevel = levelGroups.get(currentLevel)!
+    Logger.info(`\n🏢 层级 ${currentLevel} (${plansInLevel.length} 个任务):`)
 
-    const levelModeInfo = isDryRun ? ' (DRY RUN - 仅显示参数)' : ''
-    Logger.info(`\n🔄 开始执行层级 ${currentLevel} (${plansInLevel.length} 个并发任务)${levelModeInfo}`)
-
-    // 先打印所有任务的 CLI 参数
-    Logger.info(`\n📋 [层级${currentLevel}] 所有任务的等效命令行参数:`)
     plansInLevel.forEach((plan, planIndex) => {
       const baseEthTransferDelay = parseInt(batchTransferOptions.ethTransferDelay || '2000')
       const taskSpecificDelay = baseEthTransferDelay + planIndex * 2000
@@ -437,11 +436,20 @@ async function executeHierarchicalDistribution(
         cliArgs.push(`--gas-price "${taskParams.gasPrice}"`)
       }
 
-      Logger.info(`\n任务${planIndex + 1}: ${plan.institutionName}`)
-      Logger.info(`${cliArgs.join(' \\\n  ')}`)
+      Logger.info(`\n  任务${planIndex + 1}: ${plan.institutionName}`)
+      Logger.info(`  ${cliArgs.join(' \\\n    ')}`)
     })
+  })
 
-    Logger.info(`\n🚀 [层级${currentLevel}] 即将开始执行 ${plansInLevel.length} 个并发任务...`)
+  Logger.info(`\n====================================================`)
+  Logger.info(`📋 CLI 参数预览完成，即将开始按层级执行任务...`)
+
+  for (let levelIndex = 0; levelIndex < sortedLevels.length; levelIndex++) {
+    const currentLevel = sortedLevels[levelIndex]
+    const plansInLevel = levelGroups.get(currentLevel)!
+
+    const levelModeInfo = isDryRun ? ' (DRY RUN - 仅显示参数)' : ''
+    Logger.info(`\n🔄 开始执行层级 ${currentLevel} (${plansInLevel.length} 个并发任务)${levelModeInfo}`)
 
     // 创建所有任务的 Promise 数组
     const levelTasks = plansInLevel.map(async (plan, planIndex) => {

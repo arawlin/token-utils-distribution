@@ -401,10 +401,16 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           const roundedValue = Math.ceil(numValue / scale) * scale
 
           // 修正小数位数，确保不超过18位小数（ETH的最大精度）
-          const fixedValue = roundedValue.toFixed(18)
-          const trimmedValue = parseFloat(fixedValue).toString()
+          // 使用 toFixed 而不是 toString() 来避免科学计数法
+          const decimalPlaces = Math.max(0, 18 - magnitude)
+          const fixedValue = roundedValue.toFixed(Math.min(decimalPlaces, 18))
 
-          return ethers.parseEther(trimmedValue)
+          // 移除末尾的零
+          const trimmedValue = parseFloat(fixedValue)
+            .toFixed(18)
+            .replace(/\.?0+$/, '')
+
+          return ethers.parseEther(trimmedValue || '0')
         }
 
         const transferAmount = formatTo2SignificantDigits(baseTransferAmount)

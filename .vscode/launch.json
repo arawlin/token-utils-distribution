@@ -220,12 +220,6 @@
         "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
         "--tos",
         "0x2C65148ad0885BEA5977089F165cBFA9975c5780,0xa1AB29439FFF3bd361056aCAc000DA7cf39d439d,0xe5aac51c962041004566f6216555172944A5F6fc",
-        "--amount-min",
-        "10000",
-        "--amount-max",
-        "20000",
-        "--batch-size",
-        "2",
         "--trailing-zeros",
         "2"
       ],

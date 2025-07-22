@@ -40,7 +40,11 @@ task('batch-transfer-token', '批量转账Token到多个地址')
   .addOptionalParam('delayMin', '交易间最小延迟（毫秒）', '1000')
   .addOptionalParam('delayMax', '交易间最大延迟（毫秒）', '5000')
   .addOptionalParam('autoFundGas', '当ETH余额不足时自动转账ETH', 'true')
-  .addOptionalParam('fundingSource', '资助钱包私钥或地址（默认使用配置文件中的交易所钱包）')
+  .addOptionalParam(
+    'fundingSource',
+    '资助钱包地址列表，用逗号分隔 (例: 0x123...,0x456...)，随机选择一个进行转账',
+    process.env.FUNDING_WALLET_ADDRESS,
+  )
   .addOptionalParam('fundingAmount', '自动转账的ETH数量，默认为所需gas费的1.5倍')
   .addOptionalParam('fundingDelay', '转账后等待时间（毫秒）', '5000')
   .addOptionalParam('ethTransferDelay', '并发执行时ETH转账前等待延迟（毫秒）', '0')
@@ -409,29 +413,45 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
         // 获取资助钱包
         let fundingWallet: ethers.Wallet | null = null
-        if (!fundingSource) {
-          const fundingSourceConfig = process.env.FUNDING_WALLET_ADDRESS
-          if (!fundingSourceConfig) {
-            Logger.error('未提供资助钱包地址或私钥，请设置环境变量 FUNDING_WALLET_ADDRESS')
-            return
-          }
+        let selectedFundingAddress: string = ''
 
-          // 如果提供的是地址，尝试从已加载的钱包中查找
-          const sourceLowerCase = fundingSourceConfig.toLowerCase()
-          for (const [address, wallet] of allWallets) {
-            if (address === sourceLowerCase) {
-              fundingWallet = wallet
-              break
-            }
-          }
-          if (!fundingWallet) {
-            Logger.error(`未在配置的钱包中找到资助地址: ${fundingSourceConfig}`)
-            return
-          }
+        if (!fundingSource) {
+          Logger.error('未提供资助钱包地址，请设置 --fundingSource 参数或环境变量 FUNDING_WALLET_ADDRESS')
+          return
+        }
+        // 解析多个资助地址
+        const fundingAddresses = fundingSource
+          .split(',')
+          .map((addr: string) => addr.trim())
+          .filter((addr: string) => addr.length > 0)
+
+        if (fundingAddresses.length === 0) {
+          Logger.error('未提供有效的资助地址')
+          return
         }
 
+        // 验证所有资助地址格式
+        const invalidFundingAddresses = fundingAddresses.filter((addr: string) => !ethers.isAddress(addr))
+        if (invalidFundingAddresses.length > 0) {
+          Logger.error(`无效的资助地址格式:`)
+          invalidFundingAddresses.forEach((addr: string) => Logger.error(`  ${addr}`))
+          return
+        }
+
+        // 随机选择一个资助地址
+        selectedFundingAddress = fundingAddresses[Math.floor(Math.random() * fundingAddresses.length)]
+        Logger.info(`从 ${fundingAddresses.length} 个资助地址中随机选择: ${selectedFundingAddress}`)
+
+        // 从已加载的钱包中查找选中的资助地址
+        const sourceLowerCase = selectedFundingAddress.toLowerCase()
+        for (const [address, wallet] of allWallets) {
+          if (address === sourceLowerCase) {
+            fundingWallet = wallet
+            break
+          }
+        }
         if (!fundingWallet) {
-          Logger.error('所有交易所钱包余额都不足，无法进行自动转账')
+          Logger.error(`未在配置的钱包中找到资助地址: ${selectedFundingAddress}`)
           return
         }
 

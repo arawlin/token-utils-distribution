@@ -168,13 +168,9 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
         )
       })
 
-      if (isDryRun) {
-        Logger.info('\n🔍 DRY RUN 完成 - 以上为分发计划预览')
-        return
-      }
-
-      // 执行层级分发
-      Logger.info('\n🚀 开始执行层级分发...')
+      // 执行层级分发（DRY RUN 模式将显示任务参数但不实际执行）
+      const executionModeText = isDryRun ? '🔍 开始显示层级分发参数...' : '🚀 开始执行层级分发...'
+      Logger.info(`\n${executionModeText}`)
       const results = await executeHierarchicalDistribution(
         distributionPlan,
         {
@@ -193,17 +189,19 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
           delayMax: parseInt(delayMax),
         },
         hre,
+        isDryRun, // 传递 dryRun 参数
       )
 
       // 输出结果统计
-      Logger.info('\n📊 层级分发结果:')
+      const resultModeText = isDryRun ? '📊 DRY RUN 模式结果:' : '📊 层级分发结果:'
+      Logger.info(`\n${resultModeText}`)
       Logger.info(`成功完成: ${results.completedLevels}/${results.totalLevels} 个层级`)
 
       results.results.forEach(result => {
         const status = result.success ? '✅' : '❌'
         Logger.info(`${status} 层级 ${result.level}: ${result.institutionName}`)
         Logger.info(`     从 ${result.fromAddress} 分发到 ${result.toAddressesCount} 个地址`)
-        if (result.actualAmount) {
+        if (result.actualAmount && !isDryRun) {
           Logger.info(`     实际分发: ${result.actualAmount} ${tokenSymbol}`)
         }
         if (result.error) {
@@ -212,7 +210,8 @@ task('hierarchical-distribution', '按机构层级自动执行Token分发')
       })
 
       if (results.success) {
-        Logger.info('🎉 层级分发完成!')
+        const completionText = isDryRun ? '🎉 DRY RUN 参数显示完成!' : '🎉 层级分发完成!'
+        Logger.info(completionText)
       } else {
         Logger.error('❌ 层级分发部分失败，请检查错误信息')
       }
@@ -343,6 +342,7 @@ async function executeHierarchicalDistribution(
     delayMax: number
   },
   hre: HardhatRuntimeEnvironment,
+  isDryRun: boolean = false,
 ): Promise<HierarchicalDistributionResult> {
   const results: HierarchicalDistributionResult = {
     success: true,
@@ -363,13 +363,17 @@ async function executeHierarchicalDistribution(
   })
 
   const sortedLevels = Array.from(levelGroups.keys()).sort((a, b) => a - b)
-  Logger.info(`📊 分发层级分组: ${sortedLevels.map(level => `Level ${level} (${levelGroups.get(level)!.length}个任务)`).join(', ')}`)
+  const executionMode = isDryRun ? ' (DRY RUN 模式)' : ''
+  Logger.info(
+    `📊 分发层级分组${executionMode}: ${sortedLevels.map(level => `Level ${level} (${levelGroups.get(level)!.length}个任务)`).join(', ')}`,
+  )
 
   for (let levelIndex = 0; levelIndex < sortedLevels.length; levelIndex++) {
     const currentLevel = sortedLevels[levelIndex]
     const plansInLevel = levelGroups.get(currentLevel)!
 
-    Logger.info(`\n� 开始执行层级 ${currentLevel} (${plansInLevel.length} 个并发任务)`)
+    const levelModeInfo = isDryRun ? ' (DRY RUN - 仅显示参数)' : ''
+    Logger.info(`\n🔄 开始执行层级 ${currentLevel} (${plansInLevel.length} 个并发任务)${levelModeInfo}`)
 
     // 创建所有任务的 Promise 数组
     const levelTasks = plansInLevel.map(async (plan, planIndex) => {
@@ -431,15 +435,25 @@ async function executeHierarchicalDistribution(
         Logger.info(`📋 [层级${currentLevel}-任务${planIndex + 1}] 等效命令行参数:`)
         Logger.info(`${cliArgs.join(' \\\n  ')}`)
 
-        // 直接运行 Hardhat 任务
-        await hre.run('batch-transfer-token', taskParams)
-
-        Logger.info(`✅ [层级${currentLevel}-任务${planIndex + 1}] 分发成功: ${plan.institutionName}`)
-        taskResult.success = true
+        if (isDryRun) {
+          Logger.info(`🔍 [层级${currentLevel}-任务${planIndex + 1}] DRY RUN 模式 - 跳过实际执行`)
+          taskResult.success = true
+        } else {
+          // 直接运行 Hardhat 任务
+          await hre.run('batch-transfer-token', taskParams)
+          Logger.info(`✅ [层级${currentLevel}-任务${planIndex + 1}] 分发成功: ${plan.institutionName}`)
+          taskResult.success = true
+        }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        Logger.error(`❌ [层级${currentLevel}-任务${planIndex + 1}] 分发失败: ${plan.institutionName}`, error)
-        taskResult.error = errorMessage
+        if (isDryRun) {
+          // DRY RUN 模式下不应该有实际错误，只是显示参数
+          Logger.info(`🔍 [层级${currentLevel}-任务${planIndex + 1}] DRY RUN 完成: ${plan.institutionName}`)
+          taskResult.success = true
+        } else {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          Logger.error(`❌ [层级${currentLevel}-任务${planIndex + 1}] 分发失败: ${plan.institutionName}`, error)
+          taskResult.error = errorMessage
+        }
       }
 
       return taskResult

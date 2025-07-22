@@ -4,6 +4,18 @@ import 'hardhat-deploy'
 import { HardhatUserConfig } from 'hardhat/config'
 
 import './tasks'
+import { Logger } from './tasks/utils'
+
+// 在 Hardhat 配置加载时立即初始化 Logger
+const initializeLogger = () => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '_').split('.')[0]
+  const logFilename = `hardhat-${timestamp}.log`
+  Logger.setLogFile(logFilename)
+  Logger.info('🚀 Hardhat 配置已加载，Logger 已初始化')
+}
+
+// 立即执行 Logger 初始化
+initializeLogger()
 
 const networkSettings = {
   gas: 'auto' as const,

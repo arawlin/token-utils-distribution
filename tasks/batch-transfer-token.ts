@@ -224,21 +224,13 @@ task('batch-transfer-token', '批量转账Token到多个地址')
         const weights = addresses.map(() => Math.random())
         const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
 
-        const initialPlans: TokenTransferPlan[] = []
-        let distributedAmount = 0n
+        const plans: TokenTransferPlan[] = []
 
-        // 第一次分配：生成初始计划
-        addresses.forEach((address, index) => {
-          let amount: bigint
-
-          if (index === addresses.length - 1) {
-            // 最后一个地址获得剩余的所有金额
-            amount = totalAmount - distributedAmount
-          } else {
-            // 按权重分配
-            const ratio = weights[index] / totalWeight
-            amount = BigInt(Math.floor(Number(totalAmount) * ratio))
-          }
+        // 对所有地址按比例分配金额
+        for (let i = 0; i < addresses.length; i++) {
+          const address = addresses[i]
+          const ratio = weights[i] / totalWeight
+          let amount = BigInt(Math.floor(Number(totalAmount) * ratio))
 
           // 将 amount 转换为小数进行处理
           let amountInEther = parseFloat(ethers.formatUnits(amount, decimals))
@@ -249,104 +241,27 @@ task('batch-transfer-token', '批量转账Token到多个地址')
             amountInEther = Math.round(amountInEther * multiplier) / multiplier
           }
 
-          // 应用末尾零控制（包括最后一个地址）
+          // 应用末尾零控制
           if (trailingZeros !== undefined && trailingZeros > 0) {
             const divisor = Math.pow(10, trailingZeros)
-            // 确保末尾至少有指定数量的零
             amountInEther = Math.floor(amountInEther / divisor) * divisor
-
-            // 如果结果为0，至少保证一个有效的数值
-            if (amountInEther === 0) {
-              amountInEther = divisor
-            }
           }
 
           // 转换回 bigint
           amount = ethers.parseUnits(amountInEther.toString(), decimals)
 
-          initialPlans.push({
-            from: fromWallet.address,
-            to: address,
-            amount: formatTokenAmount(amount, decimals),
-            amountBigInt: amount,
-          })
-
-          distributedAmount += amount
-        })
-
-        // 过滤掉金额为0的计划
-        const validPlans = initialPlans.filter(plan => plan.amountBigInt > 0n)
-
-        if (validPlans.length === 0) {
-          return initialPlans // 如果所有计划都为0，返回原始计划让上层处理
-        }
-
-        // 重新分配金额确保总额正确
-        const actualDistributed = validPlans.reduce((sum, plan) => sum + plan.amountBigInt, 0n)
-
-        if (actualDistributed !== totalAmount) {
-          // 计算差额
-          const difference = totalAmount - actualDistributed
-
-          if (difference > 0n) {
-            // 如果有剩余金额，需要按照 trailing-zeros 规则添加到最后一个地址
-            const lastPlan = validPlans[validPlans.length - 1]
-            let newAmount = lastPlan.amountBigInt + difference
-
-            // 如果设置了 trailing-zeros，需要重新调整以符合规则
-            if (trailingZeros !== undefined && trailingZeros > 0) {
-              let newAmountInEther = parseFloat(ethers.formatUnits(newAmount, decimals))
-              const divisor = Math.pow(10, trailingZeros)
-              newAmountInEther = Math.floor(newAmountInEther / divisor) * divisor
-
-              // 如果调整后金额为0，设置为最小有效值
-              if (newAmountInEther === 0) {
-                newAmountInEther = divisor
-              }
-
-              newAmount = ethers.parseUnits(newAmountInEther.toString(), decimals)
-            }
-
-            lastPlan.amountBigInt = newAmount
-            lastPlan.amount = formatTokenAmount(lastPlan.amountBigInt, decimals)
-          } else if (difference < 0n) {
-            // 如果超额分配，需要从各个地址减少金额
-            const excessAmount = -difference
-            let remainingExcess = excessAmount
-
-            // 从后往前减少金额，确保不会变成负数
-            for (let i = validPlans.length - 1; i >= 0 && remainingExcess > 0n; i--) {
-              const plan = validPlans[i]
-              const canReduce = plan.amountBigInt > remainingExcess ? remainingExcess : plan.amountBigInt
-              let newAmount = plan.amountBigInt - canReduce
-
-              // 如果设置了 trailing-zeros，需要重新调整以符合规则
-              if (trailingZeros !== undefined && trailingZeros > 0 && newAmount > 0n) {
-                let newAmountInEther = parseFloat(ethers.formatUnits(newAmount, decimals))
-                const divisor = Math.pow(10, trailingZeros)
-                newAmountInEther = Math.floor(newAmountInEther / divisor) * divisor
-
-                // 如果调整后金额为0，设置为最小有效值
-                if (newAmountInEther === 0) {
-                  newAmountInEther = divisor
-                }
-
-                newAmount = ethers.parseUnits(newAmountInEther.toString(), decimals)
-              }
-
-              const actualReduction = plan.amountBigInt - newAmount
-              plan.amountBigInt = newAmount
-              plan.amount = formatTokenAmount(plan.amountBigInt, decimals)
-              remainingExcess -= actualReduction
-            }
-
-            // 再次过滤掉可能变成0的计划
-            const finalValidPlans = validPlans.filter(plan => plan.amountBigInt > 0n)
-            return finalValidPlans
+          // 如果金额大于0，添加到计划中
+          if (amount > 0n) {
+            plans.push({
+              from: fromWallet.address,
+              to: address,
+              amount: formatTokenAmount(amount, decimals),
+              amountBigInt: amount,
+            })
           }
         }
 
-        return validPlans
+        return plans
       }
 
       const transferPlans = generateRandomDistribution(availableAmount, toAddresses, Number(tokenDecimals), precisionNum, trailingZerosNum)
@@ -361,15 +276,31 @@ task('batch-transfer-token', '批量转账Token到多个地址')
         Logger.info(`已过滤掉 ${toAddresses.length - transferPlans.length} 个金额为0的转账计划`)
       }
 
-      // 使用过滤后的有效转账计划
-      const validTransferPlans = transferPlans
+      // 计算实际转账总额（可能由于 trailing zero 规则略少于可用金额）
+      const actualTransferAmount = transferPlans.reduce((sum: bigint, plan: TokenTransferPlan) => sum + plan.amountBigInt, 0n)
 
-      const totalTransferAmount = validTransferPlans.reduce((sum: bigint, plan: TokenTransferPlan) => sum + plan.amountBigInt, 0n)
+      // 更新保留金额的计算（实际保留 = 原始保留 + 由于格式化规则未分配的金额）
+      const actualReservedAmount = fromTokenBalance - actualTransferAmount
+      const actualReservedRatio = Number((actualReservedAmount * 10000n) / fromTokenBalance) / 10000
+
+      Logger.info(`实际分配结果:`)
+      Logger.info(`  计划可转账金额: ${formatTokenAmount(availableAmount, tokenDecimals)} ${await tokenContract.symbol()}`)
+      Logger.info(`  实际转账金额: ${formatTokenAmount(actualTransferAmount, tokenDecimals)} ${await tokenContract.symbol()}`)
+      Logger.info(
+        `  实际保留金额: ${formatTokenAmount(actualReservedAmount, tokenDecimals)} ${await tokenContract.symbol()} (${(actualReservedRatio * 100).toFixed(2)}%)`,
+      )
+
+      if (actualTransferAmount < availableAmount) {
+        const unallocatedAmount = availableAmount - actualTransferAmount
+        Logger.info(`  由于格式化规则未分配: ${formatTokenAmount(unallocatedAmount, tokenDecimals)} ${await tokenContract.symbol()}`)
+      }
+
+      const totalTransferAmount = transferPlans.reduce((sum: bigint, plan: TokenTransferPlan) => sum + plan.amountBigInt, 0n)
       const gasLimit = 70000n // ERC20 transfer通常需要更多gas
-      const totalGasFee = gasLimit * gasPriceWei * BigInt(validTransferPlans.length)
+      const totalGasFee = gasLimit * gasPriceWei * BigInt(transferPlans.length)
 
       Logger.info(`转账计划:`)
-      Logger.info(`  转账笔数: ${validTransferPlans.length}`)
+      Logger.info(`  转账笔数: ${transferPlans.length}`)
       Logger.info(`  总转账金额: ${formatTokenAmount(totalTransferAmount, tokenDecimals)} ${await tokenContract.symbol()}`)
       Logger.info(`  预估总gas费: ${ethers.formatEther(totalGasFee)} ETH`)
 
@@ -543,7 +474,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       }
 
       Logger.info(`转账计划预览:`)
-      validTransferPlans.forEach((plan: TokenTransferPlan, index: number) => {
+      transferPlans.forEach((plan: TokenTransferPlan, index: number) => {
         Logger.info(`  ${index + 1}. 转账 ${plan.amount} ${tokenSymbol} 到 ${plan.to}`)
       })
 
@@ -561,16 +492,16 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       const delayMaxNum = parseInt(delayMax)
 
       // 顺序处理转账（避免nonce冲突）
-      for (let i = 0; i < validTransferPlans.length; i++) {
-        const plan = validTransferPlans[i]
-        Logger.info(`\n=== 执行第 ${i + 1}/${validTransferPlans.length} 笔转账 ===`)
+      for (let i = 0; i < transferPlans.length; i++) {
+        const plan = transferPlans[i]
+        Logger.info(`\n=== 执行第 ${i + 1}/${transferPlans.length} 笔转账 ===`)
 
         try {
           // 获取当前nonce（每次都重新获取确保准确性）
           const nonce = await provider.getTransactionCount(fromWallet.address, 'pending')
 
           Logger.info(
-            `[${i + 1}/${validTransferPlans.length}] 转账 ${plan.amount} ${await tokenContract.symbol()} 到 ${plan.to.slice(0, 10)}... (nonce: ${nonce})`,
+            `[${i + 1}/${transferPlans.length}] 转账 ${plan.amount} ${await tokenContract.symbol()} 到 ${plan.to.slice(0, 10)}... (nonce: ${nonce})`,
           )
 
           const tx = await tokenContract.transfer(plan.to, plan.amountBigInt, {
@@ -605,7 +536,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           results.transactions.push(transaction)
 
           // 交易间延迟
-          if (i < validTransferPlans.length - 1) {
+          if (i < transferPlans.length - 1) {
             const delay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
             Logger.info(`等待 ${Math.round(delay)}ms 后执行下一笔转账...`)
             await new Promise(resolve => setTimeout(resolve, delay))
@@ -625,7 +556,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           results.failed++
 
           // 即使失败也要延迟，避免快速重试
-          if (i < validTransferPlans.length - 1) {
+          if (i < transferPlans.length - 1) {
             const delay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum
             Logger.info(`失败后等待 ${Math.round(delay)}ms 再继续...`)
             await new Promise(resolve => setTimeout(resolve, delay))
@@ -665,7 +596,7 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           tokenDecimals: Number(tokenDecimals),
           fromAddress: from,
           totalAddresses: toAddresses.length,
-          validAddresses: validTransferPlans.length,
+          validAddresses: transferPlans.length,
           holdRatio: holdRatioNum,
           precision: precisionNum,
           gasPrice: ethers.formatUnits(gasPriceWei, 'gwei') + ' gwei',

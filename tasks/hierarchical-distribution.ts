@@ -370,6 +370,27 @@ async function executeHierarchicalDistribution(
     results: [],
   }
 
+  // 生成任务参数的辅助函数
+  const generateTaskParams = (plan: HierarchicalDistributionPlan, planIndex: number) => {
+    const baseEthTransferDelay = parseInt(batchTransferOptions.ethTransferDelay || '2000')
+    const taskSpecificDelay = baseEthTransferDelay + planIndex * 2000
+
+    return {
+      configDir: batchTransferOptions.configDir,
+      tokenAddress: batchTransferOptions.tokenAddress,
+      from: plan.fromAddress,
+      tos: plan.toAddresses.join(','),
+      holdRatio: plan.holdRatio,
+      trailingZeros: batchTransferOptions.trailingZeros,
+      delayMin: batchTransferOptions.delayMin,
+      delayMax: batchTransferOptions.delayMax,
+      autoFundGas: batchTransferOptions.autoFundGas,
+      ethTransferDelay: taskSpecificDelay.toString(),
+      ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
+      ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
+    }
+  }
+
   // 按层级分组执行分发计划（相同层级并发执行）
   const levelGroups = new Map<number, HierarchicalDistributionPlan[]>()
 
@@ -396,23 +417,7 @@ async function executeHierarchicalDistribution(
     Logger.info(`\n🏢 层级 ${currentLevel} (${plansInLevel.length} 个任务):`)
 
     plansInLevel.forEach((plan, planIndex) => {
-      const baseEthTransferDelay = parseInt(batchTransferOptions.ethTransferDelay || '2000')
-      const taskSpecificDelay = baseEthTransferDelay + planIndex * 2000
-
-      const taskParams = {
-        configDir: batchTransferOptions.configDir,
-        tokenAddress: batchTransferOptions.tokenAddress,
-        from: plan.fromAddress,
-        tos: plan.toAddresses.join(','),
-        holdRatio: plan.holdRatio,
-        trailingZeros: batchTransferOptions.trailingZeros,
-        delayMin: batchTransferOptions.delayMin,
-        delayMax: batchTransferOptions.delayMax,
-        autoFundGas: batchTransferOptions.autoFundGas,
-        ethTransferDelay: taskSpecificDelay.toString(),
-        ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
-        ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
-      }
+      const taskParams = generateTaskParams(plan, planIndex)
 
       const cliArgs = [
         'npx hardhat batch-transfer-token',
@@ -461,32 +466,15 @@ async function executeHierarchicalDistribution(
       }
 
       try {
-        // 为每个并发任务分配不同的ETH转账延迟时间，避免nonce冲突
-        const baseEthTransferDelay = parseInt(batchTransferOptions.ethTransferDelay || '2000')
-        const taskSpecificDelay = baseEthTransferDelay + planIndex * 2000
-
-        // 构建 batch-transfer-token 任务参数
-        const taskParams = {
-          configDir: batchTransferOptions.configDir,
-          tokenAddress: batchTransferOptions.tokenAddress,
-          from: plan.fromAddress,
-          tos: plan.toAddresses.join(','),
-          holdRatio: plan.holdRatio,
-          trailingZeros: batchTransferOptions.trailingZeros,
-          delayMin: batchTransferOptions.delayMin,
-          delayMax: batchTransferOptions.delayMax,
-          autoFundGas: batchTransferOptions.autoFundGas,
-          ethTransferDelay: taskSpecificDelay.toString(), // 为每个任务分配不同的延迟
-          ...(batchTransferOptions.precision && { precision: batchTransferOptions.precision }),
-          ...(batchTransferOptions.gasPrice && { gasPrice: batchTransferOptions.gasPrice }),
-        }
-
         Logger.info(`\n🔄 [层级${currentLevel}-任务${planIndex + 1}] 开始执行: ${plan.institutionName}`)
 
         if (isDryRun) {
           Logger.info(`🔍 [层级${currentLevel}-任务${planIndex + 1}] DRY RUN 模式 - 跳过实际执行`)
           taskResult.success = true
         } else {
+          // 使用统一的任务参数生成函数
+          const taskParams = generateTaskParams(plan, planIndex)
+
           // 直接运行 Hardhat 任务
           await hre.run('batch-transfer-token', taskParams)
           Logger.info(`✅ [层级${currentLevel}-任务${planIndex + 1}] 分发成功: ${plan.institutionName}`)

@@ -466,6 +466,10 @@ async function executeHierarchicalDistribution(
       }
 
       try {
+        // 为避免并发冲突，错开任务启动时间
+        const startupDelay = planIndex * 1000 // 每个任务延迟1秒启动
+        await new Promise(resolve => setTimeout(resolve, startupDelay))
+
         Logger.info(`\n🔄 [层级${currentLevel}-任务${planIndex + 1}] 开始执行: ${plan.institutionName}`)
 
         if (isDryRun) {

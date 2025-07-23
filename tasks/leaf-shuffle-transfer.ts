@@ -422,6 +422,10 @@ async function executeLeafShuffleTransfer(
 
     // 创建当前批次的转账任务 Promise 数组
     const batchTasks = currentBatch.map(async (plan, planIndexInBatch) => {
+      // 为避免并发冲突，错开任务启动时间
+      const startupDelay = planIndexInBatch * 100
+      await new Promise(resolve => setTimeout(resolve, startupDelay))
+
       const globalPlanIndex = batchIndex * batchSize + planIndexInBatch
       const taskResult = {
         plan,

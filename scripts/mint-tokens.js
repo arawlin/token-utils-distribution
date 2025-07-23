@@ -53,7 +53,7 @@ async function mintTokens() {
   // 执行批量转账任务
   console.log('\n开始执行批量转账...')
   await hre.run('batch-transfer-token', {
-    holdRatio: '0.1',
+    holdRatio: '0.998',
     trailingZeros: '2',
     delayMin: '1000',
     delayMax: '5000',

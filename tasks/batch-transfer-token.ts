@@ -366,9 +366,6 @@ task('batch-transfer-token', '批量转账Token到多个地址')
         Logger.info(`计划转账: ${ethers.formatEther(transferAmount)} ETH (${multiplier}倍系数，2位有效数字)`)
 
         // 获取资助钱包
-        let fundingWallet: ethers.Wallet | null = null
-        let selectedFundingAddress: string = ''
-
         if (!fundingSource) {
           Logger.error('未提供资助钱包地址，请设置 --fundingSource 参数或环境变量 FUNDING_WALLET_ADDRESS')
           return
@@ -384,26 +381,12 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           return
         }
 
-        // 验证所有资助地址格式
-        const invalidFundingAddresses = fundingAddresses.filter((addr: string) => !ethers.isAddress(addr))
-        if (invalidFundingAddresses.length > 0) {
-          Logger.error(`无效的资助地址格式:`)
-          invalidFundingAddresses.forEach((addr: string) => Logger.error(`  ${addr}`))
-          return
-        }
-
         // 随机选择一个资助地址
-        selectedFundingAddress = fundingAddresses[Math.floor(Math.random() * fundingAddresses.length)]
+        const selectedFundingAddress = fundingAddresses[Math.floor(Math.random() * fundingAddresses.length)]
         Logger.info(`从 ${fundingAddresses.length} 个资助地址中随机选择: ${selectedFundingAddress}`)
 
         // 从已加载的钱包中查找选中的资助地址
-        const sourceLowerCase = selectedFundingAddress.toLowerCase()
-        for (const [address, wallet] of allWallets) {
-          if (address === sourceLowerCase) {
-            fundingWallet = wallet
-            break
-          }
-        }
+        const fundingWallet = allWallets.get(selectedFundingAddress.toLowerCase())
         if (!fundingWallet) {
           Logger.error(`未在配置的钱包中找到资助地址: ${selectedFundingAddress}`)
           return

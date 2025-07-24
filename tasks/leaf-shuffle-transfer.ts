@@ -38,7 +38,7 @@ task('leaf-shuffle-transfer', '在所有机构叶子节点之间进行随机Toke
   .addOptionalParam('transferCount', '转账次数 (每个叶子节点的转账次数)', '3')
   .addOptionalParam('precision', '随机金额精度 (小数位数)')
   .addOptionalParam('trailingZeros', '末尾零的最小数量', '1')
-  .addOptionalParam('gasPrice', 'Gas价格 (gwei)', '')
+  .addOptionalParam('gasPrice', 'Gas价格 (gwei)')
   .addOptionalParam('delayMin', '转账间最小延迟（毫秒）', '1000')
   .addOptionalParam('delayMax', '转账间最大延迟（毫秒）', '5000')
   .addOptionalParam('ethTransferDelay', '并发执行时ETH转账等待延迟（毫秒）', '1000')
@@ -345,19 +345,19 @@ async function generateLeafShuffleTransferPlan(
     const holdRatio = (Math.random() * (maxHoldRatio - minHoldRatio) + minHoldRatio).toFixed(3)
 
     // 获取当前余额用于估算
-    let estimatedAmount: string | undefined
-    try {
-      const balance = await tokenContract.balanceOf(fromAddress)
-      if (balance > 0n) {
-        const retentionRatio = parseFloat(holdRatio)
-        const availableAmount = balance - (balance * BigInt(Math.floor(retentionRatio * 10000))) / 10000n
-        if (availableAmount > 0n) {
-          estimatedAmount = formatTokenAmount(availableAmount, tokenDecimals)
-        }
-      }
-    } catch {
-      // 忽略余额查询错误
-    }
+    const estimatedAmount: string | undefined = '0'
+    // try {
+    //   const balance = await tokenContract.balanceOf(fromAddress)
+    //   if (balance > 0n) {
+    //     const retentionRatio = parseFloat(holdRatio)
+    //     const availableAmount = balance - (balance * BigInt(Math.floor(retentionRatio * 10000))) / 10000n
+    //     if (availableAmount > 0n) {
+    //       estimatedAmount = formatTokenAmount(availableAmount, tokenDecimals)
+    //     }
+    //   }
+    // } catch {
+    //   // 忽略余额查询错误
+    // }
 
     const planId = `${institutionName}-R${i + 1}`
 
@@ -423,7 +423,7 @@ async function executeLeafShuffleTransfer(
     // 创建当前批次的转账任务 Promise 数组
     const batchTasks = currentBatch.map(async (plan, planIndexInBatch) => {
       // 为避免并发冲突，错开任务启动时间
-      const startupDelay = planIndexInBatch * 100
+      const startupDelay = planIndexInBatch * 2000
       await new Promise(resolve => setTimeout(resolve, startupDelay))
 
       const globalPlanIndex = batchIndex * batchSize + planIndexInBatch
@@ -472,60 +472,64 @@ async function executeLeafShuffleTransfer(
       return taskResult
     })
 
-    // 等待当前批次的所有任务完成
-    const batchResults = await Promise.allSettled(batchTasks)
+    try {
+      // 等待当前批次的所有任务完成
+      const batchResults = await Promise.allSettled(batchTasks)
 
-    // 处理当前批次的结果
-    let batchSuccessCount = 0
-    let batchFailureCount = 0
+      // 处理当前批次的结果
+      let batchSuccessCount = 0
+      let batchFailureCount = 0
 
-    batchResults.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        const taskResult = result.value
-        if (taskResult.success) {
-          batchSuccessCount++
-          results.completedPlans++
-          results.results.push({
-            planId: taskResult.plan.planId,
-            fromAddress: taskResult.plan.fromAddress,
-            toAddress: taskResult.plan.toAddress,
-            institutionName: taskResult.plan.institutionName,
-            success: true,
-            actualAmount: taskResult.plan.estimatedAmount,
-          })
+      batchResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          const taskResult = result.value
+          if (taskResult.success) {
+            batchSuccessCount++
+            results.completedPlans++
+            results.results.push({
+              planId: taskResult.plan.planId,
+              fromAddress: taskResult.plan.fromAddress,
+              toAddress: taskResult.plan.toAddress,
+              institutionName: taskResult.plan.institutionName,
+              success: true,
+              actualAmount: taskResult.plan.estimatedAmount,
+            })
+          } else {
+            batchFailureCount++
+            results.success = false
+            results.results.push({
+              planId: taskResult.plan.planId,
+              fromAddress: taskResult.plan.fromAddress,
+              toAddress: taskResult.plan.toAddress,
+              institutionName: taskResult.plan.institutionName,
+              success: false,
+              error: taskResult.error,
+            })
+          }
         } else {
           batchFailureCount++
           results.success = false
+          const plan = currentBatch[index]
           results.results.push({
-            planId: taskResult.plan.planId,
-            fromAddress: taskResult.plan.fromAddress,
-            toAddress: taskResult.plan.toAddress,
-            institutionName: taskResult.plan.institutionName,
+            planId: plan.planId,
+            fromAddress: plan.fromAddress,
+            toAddress: plan.toAddress,
+            institutionName: plan.institutionName,
             success: false,
-            error: taskResult.error,
+            error: `任务执行异常: ${result.reason}`,
           })
         }
-      } else {
-        batchFailureCount++
-        results.success = false
-        const plan = currentBatch[index]
-        results.results.push({
-          planId: plan.planId,
-          fromAddress: plan.fromAddress,
-          toAddress: plan.toAddress,
-          institutionName: plan.institutionName,
-          success: false,
-          error: `任务执行异常: ${result.reason}`,
-        })
+      })
+
+      Logger.info(`\n📊 批次 ${batchNum} 执行完成: 成功 ${batchSuccessCount}/${currentBatch.length}, 失败 ${batchFailureCount}`)
+
+      // 如果不是最后一个批次，等待指定的延迟时间
+      if (batchIndex < batches.length - 1) {
+        Logger.info(`⏱️  批次 ${batchNum} 完成，等待 ${Math.round(batchDelay / 1000)}s 后执行下一批次...`)
+        await new Promise(resolve => setTimeout(resolve, batchDelay))
       }
-    })
-
-    Logger.info(`\n📊 批次 ${batchNum} 执行完成: 成功 ${batchSuccessCount}/${currentBatch.length}, 失败 ${batchFailureCount}`)
-
-    // 如果不是最后一个批次，等待指定的延迟时间
-    if (batchIndex < batches.length - 1) {
-      Logger.info(`⏱️  批次 ${batchNum} 完成，等待 ${Math.round(batchDelay / 1000)}s 后执行下一批次...`)
-      await new Promise(resolve => setTimeout(resolve, batchDelay))
+    } catch (error) {
+      Logger.error(`❌ [批次${batchNum}] 转账存在失败 的交易`, error)
     }
   }
 

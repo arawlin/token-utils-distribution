@@ -267,8 +267,8 @@ async function collectLeafNodeAddresses(institution: InstitutionNode): Promise<s
 
   // 递归收集叶子节点
   function collectLeafNodes(node: InstitutionNode) {
-    // 首先收集当前节点的地址（如果有的话）
-    if (node.addresses && node.addresses.length > 0) {
+    // 排除 depth 0 的节点地址作为收款地址
+    if (node.depth !== 0 && node.addresses && node.addresses.length > 0) {
       leafAddresses.push(...node.addresses)
     }
 

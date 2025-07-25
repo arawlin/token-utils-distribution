@@ -70,27 +70,3 @@ export const obfuscationConfig: ObfuscationConfig = {
     },
   },
 }
-
-// 网络特定配置
-export const networkConfigs = {
-  local: {
-    gasPrice: 20000000000, // 20 gwei
-    gasLimit: 21000,
-    confirmations: 1,
-  },
-  sepolia: {
-    gasPrice: 'auto',
-    gasLimit: 'auto',
-    confirmations: 2,
-  },
-  mainnet: {
-    gasPrice: 'auto',
-    gasLimit: 'auto',
-    confirmations: 3,
-  },
-}
-
-// 获取网络配置
-export function getNetworkConfig(networkName: string) {
-  return networkConfigs[networkName as keyof typeof networkConfigs] || networkConfigs.local
-}

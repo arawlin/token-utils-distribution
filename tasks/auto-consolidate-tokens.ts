@@ -303,6 +303,7 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
               from: plan.from,
               tos: plan.to, // 单个目标地址
               holdRatio: '0', // 转移所有Token，不保留
+              trailingZeros: '0',
               gasPrice: gasPrice || '',
               delayMin: delayMin, // 使用用户指定的延迟
               delayMax: delayMax,

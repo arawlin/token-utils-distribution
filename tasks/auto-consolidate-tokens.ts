@@ -256,169 +256,140 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
         transactions: [],
       }
 
-      const delayMinNum = parseInt(delayMin)
-      const delayMaxNum = parseInt(delayMax)
       const batchSizeNum = parseInt(batchSize)
       const batchDelayNum = parseInt(batchDelay)
 
       // 执行归集 - 使用 batch-transfer-token 任务
       Logger.info('开始执行Token归集...')
 
-      // 按目标地址分组归集计划
-      const plansByTarget = new Map<string, ConsolidationPlan[]>()
-      for (const plan of consolidationPlans) {
-        const targetKey = plan.to
-        if (!plansByTarget.has(targetKey)) {
-          plansByTarget.set(targetKey, [])
-        }
-        plansByTarget.get(targetKey)!.push(plan)
+      // 随机打乱归集计划
+      const shuffledPlans = [...consolidationPlans]
+      for (let i = shuffledPlans.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[shuffledPlans[i], shuffledPlans[j]] = [shuffledPlans[j], shuffledPlans[i]]
       }
 
-      Logger.info(`将执行 ${plansByTarget.size} 个批次归集到不同目标地址`)
+      Logger.info(`已随机打乱 ${shuffledPlans.length} 个归集计划`)
+      shuffledPlans.forEach((plan, index) => {
+        Logger.info(`  ${index + 1}. ${plan.from.slice(0, 10)}... → ${plan.to.slice(0, 10)}... : ${plan.formattedAmount} ${tokenSymbol}`)
+      })
 
-      let batchIndex = 0
-      for (const [targetAddress, targetPlans] of plansByTarget) {
-        batchIndex++
-        Logger.info(`\n=== 执行第 ${batchIndex}/${plansByTarget.size} 个批次归集 ===`)
-        Logger.info(`目标地址: ${targetAddress}`)
-        Logger.info(`批次包含 ${targetPlans.length} 个源钱包`)
+      // 将所有计划按 batchSize 分为多个批次
+      const batches: ConsolidationPlan[][] = []
+      for (let i = 0; i < shuffledPlans.length; i += batchSizeNum) {
+        batches.push(shuffledPlans.slice(i, i + batchSizeNum))
+      }
 
-        // 将目标地址的转账计划按 batchSize 分为多个子批次
-        const subBatches: ConsolidationPlan[][] = []
-        for (let i = 0; i < targetPlans.length; i += batchSizeNum) {
-          subBatches.push(targetPlans.slice(i, i + batchSizeNum))
-        }
+      Logger.info(`将分为 ${batches.length} 个批次执行，每批次最多 ${batchSizeNum} 个并发转账`)
 
-        Logger.info(`将分为 ${subBatches.length} 个子批次执行，每批次最多 ${batchSizeNum} 个并发转账`)
+      // 逐个批次执行
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const currentBatch = batches[batchIndex]
+        const batchNum = batchIndex + 1
 
-        let totalBatchSuccessCount = 0
-        let totalBatchFailureCount = 0
+        Logger.info(`\n🔄 [批次${batchNum}/${batches.length}] 开始执行 ${currentBatch.length} 个并发转账...`)
 
-        // 逐个子批次执行
-        for (let subBatchIndex = 0; subBatchIndex < subBatches.length; subBatchIndex++) {
-          const currentSubBatch = subBatches[subBatchIndex]
-          const subBatchNum = subBatchIndex + 1
+        // 为当前批次创建并发任务
+        const batchPromises = currentBatch.map(async (plan, planIndexInBatch) => {
+          const globalPlanIndex = batchIndex * batchSizeNum + planIndexInBatch
+          Logger.info(`\n--- [批次${batchNum}-转账${planIndexInBatch + 1}] 准备归集 ---`)
+          Logger.info(`从 ${plan.from.slice(0, 10)}... 归集 ${plan.formattedAmount} ${tokenSymbol} 到 ${plan.to.slice(0, 10)}...`)
 
-          Logger.info(`\n🔄 [批次${batchIndex}-子批次${subBatchNum}] 开始执行 ${currentSubBatch.length} 个并发转账...`)
+          try {
+            // 调用 batch-transfer-token 任务执行单个转账，让它自动处理 gas 费
+            await hre.run('batch-transfer-token', {
+              configDir,
+              tokenAddress: tokenAddressReal,
+              from: plan.from,
+              tos: plan.to, // 单个目标地址
+              holdRatio: '0', // 转移所有Token，不保留
+              gasPrice: gasPrice || '',
+              delayMin: delayMin, // 使用用户指定的延迟
+              delayMax: delayMax,
+              autoFundGas: autoFundGas, // 传递给 batch-transfer-token
+              fundingSource: fundingSource || '',
+              fundingDelay: fundingDelay,
+              ethTransferDelay: (planIndexInBatch * 1000).toString(), // 为并发任务分配不同的ETH转账延迟
+            })
 
-          // 为当前子批次创建并发任务
-          const batchPromises = currentSubBatch.map(async (plan, planIndexInSubBatch) => {
-            const globalPlanIndex = subBatchIndex * batchSizeNum + planIndexInSubBatch
-            Logger.info(`\n--- [批次${batchIndex}-子批次${subBatchNum}-转账${planIndexInSubBatch + 1}] 准备归集 ---`)
-            Logger.info(`从 ${plan.from.slice(0, 10)}... 归集 ${plan.formattedAmount} ${tokenSymbol} 到 ${plan.to.slice(0, 10)}...`)
+            Logger.info(
+              `✅ [批次${batchNum}-转账${planIndexInBatch + 1}] Token归集成功: ${plan.from.slice(0, 10)}... → ${plan.to.slice(0, 10)}...`,
+            )
 
-            try {
-              // 调用 batch-transfer-token 任务执行单个转账，让它自动处理 gas 费
-              await hre.run('batch-transfer-token', {
-                configDir,
-                tokenAddress: tokenAddressReal,
-                from: plan.from,
-                tos: plan.to, // 单个目标地址
-                holdRatio: '0', // 转移所有Token，不保留
-                gasPrice: gasPrice || '',
-                delayMin: delayMin, // 使用用户指定的延迟
-                delayMax: delayMax,
-                autoFundGas: autoFundGas, // 传递给 batch-transfer-token
-                fundingSource: fundingSource || '',
-                fundingDelay: fundingDelay,
-                ethTransferDelay: (planIndexInSubBatch * 1000).toString(), // 为并发任务分配不同的ETH转账延迟
-              })
-
-              Logger.info(
-                `✅ [批次${batchIndex}-子批次${subBatchNum}-转账${planIndexInSubBatch + 1}] Token归集成功: ${plan.from.slice(0, 10)}... → ${plan.to.slice(0, 10)}...`,
-              )
-
-              return {
-                success: true,
-                plan,
-                planIndex: globalPlanIndex,
-              }
-            } catch (error) {
-              Logger.error(`❌ [批次${batchIndex}-子批次${subBatchNum}-转账${planIndexInSubBatch + 1}] Token归集失败:`, error)
-
-              return {
-                success: false,
-                plan,
-                planIndex: globalPlanIndex,
-                error: error instanceof Error ? error.message : String(error),
-              }
+            return {
+              success: true,
+              plan,
+              planIndex: globalPlanIndex,
             }
-          })
+          } catch (error) {
+            Logger.error(`❌ [批次${batchNum}-转账${planIndexInBatch + 1}] Token归集失败:`, error)
 
-          // 等待当前子批次的所有转账完成
-          const subBatchResults = await Promise.allSettled(batchPromises)
+            return {
+              success: false,
+              plan,
+              planIndex: globalPlanIndex,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          }
+        })
 
-          // 处理子批次结果
-          let subBatchSuccessCount = 0
-          let subBatchFailureCount = 0
+        // 等待当前批次的所有转账完成
+        const batchResults = await Promise.allSettled(batchPromises)
 
-          subBatchResults.forEach((result, index) => {
-            if (result.status === 'fulfilled') {
-              const taskResult = result.value
-              if (taskResult.success) {
-                subBatchSuccessCount++
-                totalBatchSuccessCount++
-                results.success++
-                results.totalCollected += taskResult.plan.amount
+        // 处理批次结果
+        let batchSuccessCount = 0
+        let batchFailureCount = 0
 
-                results.transactions.push({
-                  from: taskResult.plan.from,
-                  to: taskResult.plan.to,
-                  amount: taskResult.plan.formattedAmount,
-                  status: 'success',
-                  type: 'token',
-                })
-              } else {
-                subBatchFailureCount++
-                totalBatchFailureCount++
-                results.failed++
-
-                results.transactions.push({
-                  from: taskResult.plan.from,
-                  to: taskResult.plan.to,
-                  amount: taskResult.plan.formattedAmount,
-                  error: taskResult.error,
-                  status: 'failed',
-                  type: 'token',
-                })
-              }
-            } else {
-              subBatchFailureCount++
-              totalBatchFailureCount++
-              results.failed++
-              const plan = currentSubBatch[index]
+        batchResults.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            const taskResult = result.value
+            if (taskResult.success) {
+              batchSuccessCount++
+              results.success++
+              results.totalCollected += taskResult.plan.amount
 
               results.transactions.push({
-                from: plan.from,
-                to: plan.to,
-                amount: plan.formattedAmount,
-                error: `任务执行异常: ${result.reason}`,
+                from: taskResult.plan.from,
+                to: taskResult.plan.to,
+                amount: taskResult.plan.formattedAmount,
+                status: 'success',
+                type: 'token',
+              })
+            } else {
+              batchFailureCount++
+              results.failed++
+
+              results.transactions.push({
+                from: taskResult.plan.from,
+                to: taskResult.plan.to,
+                amount: taskResult.plan.formattedAmount,
+                error: taskResult.error,
                 status: 'failed',
                 type: 'token',
               })
             }
-          })
+          } else {
+            batchFailureCount++
+            results.failed++
+            const plan = currentBatch[index]
 
-          Logger.info(
-            `\n📊 [批次${batchIndex}-子批次${subBatchNum}] 执行完成: 成功 ${subBatchSuccessCount}/${currentSubBatch.length}, 失败 ${subBatchFailureCount}`,
-          )
-
-          // 子批次间延迟（除了最后一个子批次）
-          if (subBatchIndex < subBatches.length - 1) {
-            Logger.info(`等待 ${batchDelayNum}ms 后执行下一个子批次...`)
-            await new Promise(resolve => setTimeout(resolve, batchDelayNum))
+            results.transactions.push({
+              from: plan.from,
+              to: plan.to,
+              amount: plan.formattedAmount,
+              error: `任务执行异常: ${result.reason}`,
+              status: 'failed',
+              type: 'token',
+            })
           }
-        }
+        })
 
-        Logger.info(
-          `\n📊 批次 ${batchIndex} 总体执行完成: 成功 ${totalBatchSuccessCount}/${targetPlans.length}, 失败 ${totalBatchFailureCount}`,
-        )
+        Logger.info(`\n📊 [批次${batchNum}] 执行完成: 成功 ${batchSuccessCount}/${currentBatch.length}, 失败 ${batchFailureCount}`)
 
-        // 批次间延迟
-        if (batchIndex < plansByTarget.size) {
-          const batchDelay = Math.random() * (delayMaxNum - delayMinNum) + delayMinNum * 2 // 批次间稍长延迟
-          Logger.info(`批次 ${batchIndex} 完成，等待 ${Math.round(batchDelay)}ms 后执行下一批次...`)
-          await new Promise(resolve => setTimeout(resolve, batchDelay))
+        // 批次间延迟（除了最后一个批次）
+        if (batchIndex < batches.length - 1) {
+          Logger.info(`等待 ${batchDelayNum}ms 后执行下一个批次...`)
+          await new Promise(resolve => setTimeout(resolve, batchDelayNum))
         }
       }
 

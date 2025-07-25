@@ -4,6 +4,7 @@ import { task } from 'hardhat/config'
 import { join } from 'path'
 import { DistributionSystemConfig } from '../types'
 import { coordinator } from './coordinator'
+import { waitForTransactionWithTimeout } from './transaction-timeout'
 import { createTimestampFilename, formatTokenAmount, loadAllWallets, Logger } from './utils'
 
 interface BatchTokenTransferResult {
@@ -46,9 +47,13 @@ task('batch-transfer-token', '批量转账Token到多个地址')
     process.env.FUNDING_WALLET_ADDRESS,
   )
   .addOptionalParam('fundingAmount', '自动转账的ETH数量，默认为所需gas费的指定倍数')
-  .addOptionalParam('fundingMultiplier', '自动转账ETH的扩大倍数', '1.5')
+  .addOptionalParam('fundingMultiplier', '自动转账ETH的扩大倍数', '1.63')
   .addOptionalParam('fundingDelay', '转账后等待时间（毫秒）', '5000')
   .addOptionalParam('ethTransferDelay', '并发执行时ETH转账前等待延迟（毫秒）', '0')
+  .addOptionalParam('txTimeout', '交易确认超时时间（毫秒）', '30000')
+  .addOptionalParam('txConfirmations', '交易确认数量', '1')
+  .addOptionalParam('txMaxRetries', '交易确认最大重试次数', '1')
+  .addOptionalParam('txRetryDelay', '交易确认重试间隔（毫秒）', '5000')
   .setAction(async (taskArgs, hre) => {
     const {
       configDir,
@@ -67,6 +72,10 @@ task('batch-transfer-token', '批量转账Token到多个地址')
       fundingMultiplier,
       fundingDelay,
       ethTransferDelay,
+      txTimeout,
+      txConfirmations,
+      txMaxRetries,
+      txRetryDelay,
     } = taskArgs
 
     const tokenAddressReal = tokenAddress || process.env.TOKEN_ADDRESS
@@ -428,7 +437,16 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           Logger.info(`资助转账已提交: ${fundingTx.hash}`)
           Logger.info('等待交易确认...')
 
-          const fundingReceipt = await fundingTx.wait()
+          const fundingReceipt = await waitForTransactionWithTimeout(
+            fundingTx,
+            {
+              confirmations: parseInt(txConfirmations),
+              timeoutMs: parseInt(txTimeout),
+              maxRetries: parseInt(txMaxRetries),
+              retryDelayMs: parseInt(txRetryDelay),
+            },
+            hre.network.name,
+          )
           if (fundingReceipt?.status === 1) {
             Logger.info(`✅ 资助转账成功: ${fundingTx.hash}`)
           } else {
@@ -495,8 +513,17 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
           Logger.info(`[${i + 1}] 交易已提交: ${tx.hash}`)
 
-          // 等待确认
-          const receipt = await tx.wait()
+          // 等待确认 - 使用超时配置
+          const receipt = await waitForTransactionWithTimeout(
+            tx,
+            {
+              confirmations: parseInt(txConfirmations),
+              timeoutMs: parseInt(txTimeout),
+              maxRetries: parseInt(txMaxRetries),
+              retryDelayMs: parseInt(txRetryDelay),
+            },
+            hre.network.name,
+          )
 
           const transaction = {
             from: plan.from,

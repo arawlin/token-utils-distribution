@@ -235,14 +235,11 @@ task('batch-transfer-token', '批量转账Token到多个地址')
 
         const plans: TokenTransferPlan[] = []
 
-        // 对所有地址按比例分配金额
+        const totalAmountInEther = parseFloat(ethers.formatUnits(totalAmount, decimals))
         for (let i = 0; i < addresses.length; i++) {
-          const address = addresses[i]
+          // 对所有地址按比例分配金额
           const ratio = weights[i] / totalWeight
-          let amount = BigInt(Math.floor(Number(totalAmount) * ratio))
-
-          // 将 amount 转换为小数进行处理
-          let amountInEther = parseFloat(ethers.formatUnits(amount, decimals))
+          let amountInEther = totalAmountInEther * ratio
 
           // 应用精度设置
           if (precision !== undefined && precision >= 0) {
@@ -257,14 +254,14 @@ task('batch-transfer-token', '批量转账Token到多个地址')
           }
 
           // 转换回 bigint
-          amount = ethers.parseUnits(amountInEther.toString(), decimals)
+          const amount = ethers.parseUnits(amountInEther.toString(), decimals)
 
           // 如果金额大于0，添加到计划中
           if (amount > 0n) {
             plans.push({
               from: fromWallet.address,
-              to: address,
-              amount: formatTokenAmount(amount, decimals),
+              to: addresses[i],
+              amount: amountInEther.toString(),
               amountBigInt: amount,
             })
           }

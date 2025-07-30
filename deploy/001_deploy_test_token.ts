@@ -20,19 +20,6 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   })
 
   console.log(`TestToken deployed to: ${deployment.address}`)
-
-  if (hre.network.name !== 'hardhat') {
-    // 验证合约
-    try {
-      await hre.run('verify:verify', {
-        address: deployment.address,
-        constructorArguments: ['Test Distribution Token', 'TDT', 1000000000],
-      })
-      console.log('Contract verified on Etherscan')
-    } catch (error) {
-      console.log('Contract verification failed:', error)
-    }
-  }
 }
 
 func.tags = ['TestToken']

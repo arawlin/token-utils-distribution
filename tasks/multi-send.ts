@@ -20,6 +20,14 @@ interface MultiSendResult {
   error?: string
   recipientCount: number
   totalAmount: string
+  batchDetails?: Array<{
+    batchIndex: number
+    txHash: string
+    gasUsed: bigint
+    gasPrice: bigint
+    recipientCount: number
+    batchAmount: string
+  }>
 }
 
 // 解析 CSV 文件
@@ -92,12 +100,13 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
   .addOptionalParam('multiSendAddress', 'MultiSend 合约地址', process.env.MULTISEND_ADDRESS)
   .addOptionalParam('gasPrice', 'Gas 价格 (gwei)', '')
   .addOptionalParam('gasLimit', 'Gas 限制', '')
+  .addOptionalParam('batchSize', '每批处理的地址数量', '50')
   .addOptionalParam('from', '发送者钱包地址 (如果不指定，使用默认签名者)')
   .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('approve', '是否自动 approve token (type=token 时)', 'true')
   .addOptionalParam('dryRun', '是否仅模拟执行，不实际发送交易', 'false')
   .setAction(async (taskArgs, hre) => {
-    const { csv, type, tokenAddress, multiSendAddress, gasPrice, gasLimit, from, configDir, approve, dryRun } = taskArgs
+    const { csv, type, tokenAddress, multiSendAddress, gasPrice, gasLimit, batchSize, from, configDir, approve, dryRun } = taskArgs
 
     try {
       // 初始化日志
@@ -289,45 +298,33 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
         signer,
       )
 
-      // 准备交易参数
-      const recipients = records.map(r => r.address)
-      const amounts = records.map(r => r.amountBigInt)
-
-      // 估算 Gas
-      Logger.info('⛽ 估算 Gas 费用...')
-      let estimatedGas: bigint
-      let txValue = 0n
-
-      try {
-        if (type.toLowerCase() === 'eth') {
-          txValue = totalAmount
-          estimatedGas = await multiSend.batchSendETH.estimateGas(recipients, amounts, { value: txValue })
-        } else {
-          estimatedGas = await multiSend.batchSendToken.estimateGas(tokenAddress, recipients, amounts)
-        }
-
-        Logger.info(`预估 Gas 使用量: ${estimatedGas.toString()}`)
-      } catch (error) {
-        Logger.error('Gas 估算失败:', error)
-        throw new Error(`无法估算 Gas 费用，请检查参数和余额`)
+      // 分批参数
+      const batchSizeNum = parseInt(batchSize)
+      if (isNaN(batchSizeNum) || batchSizeNum <= 0) {
+        throw new Error('batchSize 必须是大于0的数字')
       }
 
-      // 获取 Gas 价格
-      const gasPriceWei = gasPrice
-        ? ethers.parseUnits(gasPrice, 'gwei')
-        : (await coordinator.getGasPriceRecommendation(hre.ethers.provider)).standard
+      // 将记录分批
+      const batches: CSVRecord[][] = []
+      for (let i = 0; i < records.length; i += batchSizeNum) {
+        batches.push(records.slice(i, i + batchSizeNum))
+      }
 
-      const estimatedGasCost = estimatedGas * gasPriceWei
-      Logger.info(`预估 Gas 费用: ${ethers.formatEther(estimatedGasCost)} ETH (${ethers.formatUnits(gasPriceWei, 'gwei')} gwei)`)
+      Logger.info(`📦 分批处理信息:`)
+      Logger.info(`   每批大小: ${batchSizeNum}`)
+      Logger.info(`   总批次数: ${batches.length}`)
+      batches.forEach((batch, index) => {
+        const batchAmount = batch.reduce((sum, r) => sum + r.amountBigInt, 0n)
+        Logger.info(`   批次 ${index + 1}: ${batch.length} 个地址, ${ethers.formatUnits(batchAmount, decimals)} ${tokenSymbol}`)
+      })
 
-      // 检查 ETH 余额是否足够支付 Gas 费
+      // 检查基本的 ETH 余额（不进行精确的 Gas 费预估）
       const ethBalance = await hre.ethers.provider.getBalance(signer.address)
-      const requiredETH = type.toLowerCase() === 'eth' ? totalAmount + estimatedGasCost : estimatedGasCost
+      const minRequiredETH = type.toLowerCase() === 'eth' ? totalAmount : 0n
 
-      if (ethBalance < requiredETH) {
-        throw new Error(
-          `ETH 余额不足支付 Gas 费: 需要 ${ethers.formatEther(requiredETH)} ETH，当前只有 ${ethers.formatEther(ethBalance)} ETH`,
-        )
+      Logger.info(`当前 ETH 余额: ${ethers.formatEther(ethBalance)} ETH`)
+      if (ethBalance < minRequiredETH) {
+        throw new Error(`ETH 余额不足: 需要至少 ${ethers.formatEther(minRequiredETH)} ETH，当前只有 ${ethers.formatEther(ethBalance)} ETH`)
       }
 
       // 执行交易
@@ -340,66 +337,162 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
       if (dryRun === 'true') {
         Logger.info('\n🔍 模拟执行完成 - 所有检查通过')
         Logger.info(`如果实际执行，将会:`)
-        Logger.info(`  - 发送 ${ethers.formatUnits(totalAmount, decimals)} ${tokenSymbol} 到 ${records.length} 个地址`)
-        Logger.info(`  - 消耗约 ${estimatedGas.toString()} Gas`)
-        Logger.info(`  - 花费约 ${ethers.formatEther(estimatedGasCost)} ETH Gas 费`)
+        Logger.info(`  - 分 ${batches.length} 批次发送 ${ethers.formatUnits(totalAmount, decimals)} ${tokenSymbol}`)
+        Logger.info(`  - 发送到 ${records.length} 个地址`)
+        Logger.info(`  - Gas 价格和费用将在每个批次中实时计算`)
 
         result.success = true
-        result.gasUsed = estimatedGas
-        result.gasPrice = gasPriceWei
-        result.totalGasCost = estimatedGasCost
       } else {
-        Logger.info('\n🚀 开始执行批量发送...')
+        Logger.info('\n🚀 开始执行分批量发送...')
+
+        let totalGasUsed = 0n
+        let totalGasCost = 0n
+        const batchResults: Array<{
+          batchIndex: number
+          txHash: string
+          gasUsed: bigint
+          gasPrice: bigint
+          recipientCount: number
+          batchAmount: string
+        }> = []
 
         try {
-          let tx: ethers.ContractTransactionResponse
-          const txOptions: {
-            gasPrice: bigint
-            gasLimit?: bigint
-            value?: bigint
-          } = {
-            gasPrice: gasPriceWei,
-          }
+          for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            const batch = batches[batchIndex]
+            const batchRecipients = batch.map(r => r.address)
+            const batchAmounts = batch.map(r => r.amountBigInt)
+            const batchTotalAmount = batch.reduce((sum, r) => sum + r.amountBigInt, 0n)
 
-          if (gasLimit) {
-            txOptions.gasLimit = BigInt(gasLimit)
-          }
+            Logger.info(`\n=== 执行批次 ${batchIndex + 1}/${batches.length} ===`)
+            Logger.info(`   地址数量: ${batch.length}`)
+            Logger.info(`   批次金额: ${ethers.formatUnits(batchTotalAmount, decimals)} ${tokenSymbol}`)
 
-          if (type.toLowerCase() === 'eth') {
-            txOptions.value = txValue
-            tx = await multiSend.batchSendETH(recipients, amounts, txOptions)
-          } else {
-            tx = await multiSend.batchSendToken(tokenAddress, recipients, amounts, txOptions)
-          }
-
-          Logger.info(`交易已提交: ${tx.hash}`)
-          Logger.info('等待交易确认...')
-
-          const receipt = await tx.wait()
-
-          if (receipt?.status === 1) {
-            Logger.info(`✅ 批量发送成功!`)
-            Logger.info(`   交易哈希: ${tx.hash}`)
-            Logger.info(`   Gas 使用量: ${receipt.gasUsed}`)
-            Logger.info(`   Gas 价格: ${ethers.formatUnits(receipt.gasPrice || gasPriceWei, 'gwei')} gwei`)
-            Logger.info(`   实际 Gas 费用: ${ethers.formatEther(receipt.gasUsed * (receipt.gasPrice || gasPriceWei))} ETH`)
-            Logger.info(`   发送到 ${records.length} 个地址`)
-            Logger.info(`   总金额: ${ethers.formatUnits(totalAmount, decimals)} ${tokenSymbol}`)
-
-            result = {
-              success: true,
-              txHash: tx.hash,
-              gasUsed: receipt.gasUsed,
-              gasPrice: receipt.gasPrice || gasPriceWei,
-              totalGasCost: BigInt(receipt.gasUsed) * (receipt.gasPrice || gasPriceWei),
-              recipientCount: records.length,
-              totalAmount: ethers.formatUnits(totalAmount, decimals),
+            // 实时获取当前批次的 Gas 价格
+            Logger.info('   💰 获取实时 Gas 价格...')
+            let currentGasPriceWei: bigint
+            if (gasPrice) {
+              // 如果用户指定了 gas price，就使用指定的
+              currentGasPriceWei = ethers.parseUnits(gasPrice, 'gwei')
+              Logger.info(`   使用指定 Gas 价格: ${ethers.formatUnits(currentGasPriceWei, 'gwei')} gwei`)
+            } else {
+              // 否则实时获取推荐的 gas price
+              currentGasPriceWei = (await coordinator.getGasPriceRecommendation(hre.ethers.provider)).standard
+              Logger.info(`   当前推荐 Gas 价格: ${ethers.formatUnits(currentGasPriceWei, 'gwei')} gwei`)
             }
-          } else {
-            throw new Error('交易失败')
+
+            // 实时估算当前批次的 Gas
+            Logger.info('   ⛽ 估算当前批次 Gas...')
+            let estimatedGas: bigint
+            try {
+              if (type.toLowerCase() === 'eth') {
+                estimatedGas = await multiSend.batchSendETH.estimateGas(batchRecipients, batchAmounts, {
+                  value: batchTotalAmount,
+                })
+              } else {
+                estimatedGas = await multiSend.batchSendToken.estimateGas(tokenAddress, batchRecipients, batchAmounts)
+              }
+              const estimatedGasCost = estimatedGas * currentGasPriceWei
+              Logger.info(`   预估 Gas: ${estimatedGas} (${ethers.formatEther(estimatedGasCost)} ETH)`)
+
+              // 检查当前余额是否足够支付这批次的费用
+              const currentEthBalance = await hre.ethers.provider.getBalance(signer.address)
+              const thisRequiredETH = type.toLowerCase() === 'eth' ? batchTotalAmount + estimatedGasCost : estimatedGasCost
+
+              if (currentEthBalance < thisRequiredETH) {
+                throw new Error(
+                  `批次 ${batchIndex + 1} ETH 余额不足: 需要 ${ethers.formatEther(thisRequiredETH)} ETH，当前只有 ${ethers.formatEther(currentEthBalance)} ETH`,
+                )
+              }
+            } catch (error) {
+              Logger.error(`   批次 ${batchIndex + 1} Gas 估算失败:`, error)
+              throw new Error(`批次 ${batchIndex + 1} 无法估算 Gas 费用: ${error}`)
+            }
+
+            const txOptions: {
+              gasPrice: bigint
+              gasLimit?: bigint
+              value?: bigint
+            } = {
+              gasPrice: currentGasPriceWei,
+            }
+
+            if (gasLimit) {
+              txOptions.gasLimit = BigInt(gasLimit)
+            } else {
+              // 使用估算的 Gas + 10% 缓冲
+              txOptions.gasLimit = estimatedGas + (estimatedGas * 10n) / 100n
+            }
+
+            let tx: ethers.ContractTransactionResponse
+            if (type.toLowerCase() === 'eth') {
+              txOptions.value = batchTotalAmount
+              tx = await multiSend.batchSendETH(batchRecipients, batchAmounts, txOptions)
+            } else {
+              tx = await multiSend.batchSendToken(tokenAddress, batchRecipients, batchAmounts, txOptions)
+            }
+
+            Logger.info(`   交易已提交: ${tx.hash}`)
+            Logger.info('   等待交易确认...')
+
+            const receipt = await tx.wait()
+
+            if (receipt?.status === 1) {
+              const batchGasUsed = receipt.gasUsed
+              const batchGasPrice = receipt.gasPrice || currentGasPriceWei
+              const batchGasCost = batchGasUsed * batchGasPrice
+
+              totalGasUsed += batchGasUsed
+              totalGasCost += batchGasCost
+
+              batchResults.push({
+                batchIndex: batchIndex + 1,
+                txHash: tx.hash,
+                gasUsed: batchGasUsed,
+                gasPrice: batchGasPrice,
+                recipientCount: batch.length,
+                batchAmount: ethers.formatUnits(batchTotalAmount, decimals),
+              })
+
+              Logger.info(`   ✅ 批次 ${batchIndex + 1} 发送成功!`)
+              Logger.info(`      交易哈希: ${tx.hash}`)
+              Logger.info(`      Gas 使用量: ${batchGasUsed}`)
+              Logger.info(`      Gas 费用: ${ethers.formatEther(batchGasCost)} ETH`)
+              Logger.info(`      发送到 ${batch.length} 个地址`)
+
+              // 批次间延迟（避免 nonce 问题）
+              if (batchIndex < batches.length - 1) {
+                const delay = 2000 // 2秒延迟
+                Logger.info(`   ⏱️  等待 ${delay}ms 后执行下一批次...`)
+                await new Promise(resolve => setTimeout(resolve, delay))
+              }
+            } else {
+              throw new Error(`批次 ${batchIndex + 1} 交易失败`)
+            }
           }
+
+          Logger.info(`\n✅ 所有批次发送完成!`)
+          Logger.info(`📊 总体统计:`)
+          Logger.info(`   总批次数: ${batches.length}`)
+          Logger.info(`   总地址数: ${records.length}`)
+          Logger.info(`   总金额: ${ethers.formatUnits(totalAmount, decimals)} ${tokenSymbol}`)
+          Logger.info(`   总 Gas 使用量: ${totalGasUsed}`)
+          Logger.info(`   总 Gas 费用: ${ethers.formatEther(totalGasCost)} ETH`)
+          Logger.info(`   平均每批次 Gas: ${totalGasUsed / BigInt(batches.length)}`)
+
+          result = {
+            success: true,
+            txHash: batchResults.map(b => b.txHash).join(','), // 多个交易哈希用逗号连接
+            gasUsed: totalGasUsed,
+            gasPrice: batchResults.length > 0 ? batchResults[batchResults.length - 1].gasPrice : 0n, // 使用最后一个批次的 gas price，如果没有批次则为0
+            totalGasCost: totalGasCost,
+            recipientCount: records.length,
+            totalAmount: ethers.formatUnits(totalAmount, decimals),
+          }
+
+          // 将批次详情添加到结果中
+          result.batchDetails = batchResults
         } catch (error) {
-          Logger.error('交易执行失败:', error)
+          Logger.error('分批量发送失败:', error)
           result.error = error instanceof Error ? error.message : String(error)
           throw error
         }

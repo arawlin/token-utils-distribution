@@ -1,9 +1,9 @@
 import { ethers } from 'ethers'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
 import { coordinator } from './coordinator'
-import { createTimestampFilename, Logger } from './utils'
+import { Logger } from './utils'
 
 interface CSVRecord {
   address: string
@@ -624,38 +624,6 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
           throw error
         }
       }
-
-      // 保存结果
-      const resultDir = join(configDir, 'multi-send-results')
-      if (!existsSync(resultDir)) {
-        mkdirSync(resultDir, { recursive: true })
-      }
-
-      const resultFileName = createTimestampFilename(`multi-send-${type}`)
-      const resultPath = join(resultDir, resultFileName)
-
-      const resultData = {
-        ...result,
-        metadata: {
-          timestamp: new Date().toISOString(),
-          network: hre.network.name,
-          type,
-          tokenAddress: type === 'token' ? tokenAddress : null,
-          tokenSymbol,
-          decimals,
-          multiSendAddress,
-          fromAddress: signer.address,
-          csvFile: csv,
-          dryRun: dryRun === 'true',
-          records: records.map(r => ({
-            address: r.address,
-            amount: r.amount,
-          })),
-        },
-      }
-
-      writeFileSync(resultPath, JSON.stringify(resultData, null, 2))
-      Logger.info(`📄 结果已保存到: ${resultPath}`)
 
       Logger.info('\n✅ MultiSend 批量发送任务完成!')
       Logger.info(`📝 详细日志已保存到: ${Logger.getLogFile()}`)

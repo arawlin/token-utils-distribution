@@ -9,6 +9,7 @@ import './init-hd-tree'
 import './leaf-shuffle-transfer'
 import './manual-transfer'
 import './manual-transfer-token'
+import './multi-send'
 import './obfuscation'
 import './wallet-balance'
 

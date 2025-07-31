@@ -11,6 +11,7 @@ import './manual-transfer'
 import './manual-transfer-token'
 import './multi-send'
 import './obfuscation'
+import './validate-csv'
 import './wallet-balance'
 
 // 导出类型供其他模块使用

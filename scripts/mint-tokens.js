@@ -3,8 +3,7 @@ const { existsSync, readFileSync } = require('fs')
 const { join } = require('path')
 
 async function mintTokens() {
-  const TestToken = await hre.ethers.getContractFactory('TestToken')
-  const token = TestToken.attach(process.env.TOKEN_ADDRESS)
+  const token = await hre.ethers.getContractAt('TestToken', process.env.TOKEN_ADDRESS)
 
   // 源钱包地址
   const sourceAddress = process.env.SOURCE_ADDRESS
@@ -14,6 +13,7 @@ async function mintTokens() {
 
   const [owner] = await hre.ethers.getSigners()
   console.log('Owner:', owner.address)
+  console.log('Token address:', await token.getAddress(), process.env.TOKEN_ADDRESS)
   console.log('Minting tokens to:', sourceAddress)
   console.log('Amount:', hre.ethers.formatEther(amount), 'TDT')
 

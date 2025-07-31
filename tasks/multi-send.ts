@@ -367,8 +367,46 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
             Logger.info(`   地址数量: ${batch.length}`)
             Logger.info(`   批次金额: ${ethers.formatUnits(batchTotalAmount, decimals)} ${tokenSymbol}`)
 
+            // 🔍 DEBUG: 记录批次执行前的余额状态
+            Logger.info('\n   🔍 [DEBUG] 批次执行前余额状态:')
+            const beforeSenderEthBalance = await hre.ethers.provider.getBalance(signer.address)
+            Logger.info(`     发送者 ETH 余额: ${ethers.formatEther(beforeSenderEthBalance)} ETH`)
+
+            let beforeSenderTokenBalance = 0n
+            if (type.toLowerCase() === 'token' && tokenContract) {
+              beforeSenderTokenBalance = await tokenContract.balanceOf(signer.address)
+              Logger.info(`     发送者 ${tokenSymbol} 余额: ${ethers.formatUnits(beforeSenderTokenBalance, decimals)} ${tokenSymbol}`)
+            }
+
+            // 记录接收者批次前余额（前3个作为示例）
+            const sampleRecipients = batchRecipients.slice(0, 3)
+            const beforeRecipientBalances: Array<{ address: string; ethBalance: bigint; tokenBalance?: bigint }> = []
+
+            for (const recipient of sampleRecipients) {
+              const ethBalance = await hre.ethers.provider.getBalance(recipient)
+              let tokenBalance: bigint | undefined
+
+              if (type.toLowerCase() === 'token' && tokenContract) {
+                tokenBalance = await tokenContract.balanceOf(recipient)
+              }
+
+              beforeRecipientBalances.push({ address: recipient, ethBalance, tokenBalance })
+
+              if (type.toLowerCase() === 'token') {
+                Logger.info(
+                  `     接收者 ${recipient.slice(0, 6)}...${recipient.slice(-4)}: ${ethers.formatEther(ethBalance)} ETH, ${ethers.formatUnits(tokenBalance!, decimals)} ${tokenSymbol}`,
+                )
+              } else {
+                Logger.info(`     接收者 ${recipient.slice(0, 6)}...${recipient.slice(-4)}: ${ethers.formatEther(ethBalance)} ETH`)
+              }
+            }
+
+            if (batchRecipients.length > 3) {
+              Logger.info(`     ... 还有 ${batchRecipients.length - 3} 个接收者的余额未显示`)
+            }
+
             // 实时获取当前批次的 Gas 价格
-            Logger.info('   💰 获取实时 Gas 价格...')
+            Logger.info('\n   💰 获取实时 Gas 价格...')
             let currentGasPriceWei: bigint
             if (gasPrice) {
               // 如果用户指定了 gas price，就使用指定的
@@ -459,6 +497,67 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
               Logger.info(`      Gas 费用: ${ethers.formatEther(batchGasCost)} ETH`)
               Logger.info(`      发送到 ${batch.length} 个地址`)
 
+              // 🔍 DEBUG: 记录批次执行后的余额变化
+              Logger.info('\n   🔍 [DEBUG] 批次执行后余额变化:')
+              const afterSenderEthBalance = await hre.ethers.provider.getBalance(signer.address)
+              const senderEthChange = afterSenderEthBalance - beforeSenderEthBalance
+              Logger.info(
+                `     发送者 ETH 余额: ${ethers.formatEther(beforeSenderEthBalance)} -> ${ethers.formatEther(afterSenderEthBalance)} (变化: ${ethers.formatEther(senderEthChange)} ETH)`,
+              )
+
+              if (type.toLowerCase() === 'token' && tokenContract) {
+                const afterSenderTokenBalance = await tokenContract.balanceOf(signer.address)
+                const senderTokenChange = afterSenderTokenBalance - beforeSenderTokenBalance
+                Logger.info(
+                  `     发送者 ${tokenSymbol} 余额: ${ethers.formatUnits(beforeSenderTokenBalance, decimals)} -> ${ethers.formatUnits(afterSenderTokenBalance, decimals)} (变化: ${ethers.formatUnits(senderTokenChange, decimals)} ${tokenSymbol})`,
+                )
+              }
+
+              // 检查接收者余额变化
+              for (let i = 0; i < beforeRecipientBalances.length; i++) {
+                const recipientData = beforeRecipientBalances[i]
+                const afterEthBalance = await hre.ethers.provider.getBalance(recipientData.address)
+                const ethChange = afterEthBalance - recipientData.ethBalance
+
+                if (type.toLowerCase() === 'token' && tokenContract) {
+                  const afterTokenBalance = await tokenContract.balanceOf(recipientData.address)
+                  const tokenChange = afterTokenBalance - recipientData.tokenBalance!
+                  const expectedTokenAmount = batchAmounts[sampleRecipients.indexOf(recipientData.address)]
+
+                  Logger.info(`     接收者 ${recipientData.address.slice(0, 6)}...${recipientData.address.slice(-4)}:`)
+                  Logger.info(
+                    `       ETH: ${ethers.formatEther(recipientData.ethBalance)} -> ${ethers.formatEther(afterEthBalance)} (变化: ${ethers.formatEther(ethChange)})`,
+                  )
+                  Logger.info(
+                    `       ${tokenSymbol}: ${ethers.formatUnits(recipientData.tokenBalance!, decimals)} -> ${ethers.formatUnits(afterTokenBalance, decimals)} (变化: ${ethers.formatUnits(tokenChange, decimals)}, 期望: ${ethers.formatUnits(expectedTokenAmount, decimals)})`,
+                  )
+
+                  // 验证接收金额是否正确
+                  if (tokenChange === expectedTokenAmount) {
+                    Logger.info(`       ✅ 接收金额正确`)
+                  } else {
+                    Logger.info(
+                      `       ⚠️  接收金额不匹配! 实际: ${ethers.formatUnits(tokenChange, decimals)}, 期望: ${ethers.formatUnits(expectedTokenAmount, decimals)}`,
+                    )
+                  }
+                } else {
+                  const expectedEthAmount = batchAmounts[sampleRecipients.indexOf(recipientData.address)]
+                  Logger.info(`     接收者 ${recipientData.address.slice(0, 6)}...${recipientData.address.slice(-4)}:`)
+                  Logger.info(
+                    `       ETH: ${ethers.formatEther(recipientData.ethBalance)} -> ${ethers.formatEther(afterEthBalance)} (变化: ${ethers.formatEther(ethChange)}, 期望: ${ethers.formatEther(expectedEthAmount)})`,
+                  )
+
+                  // 验证接收金额是否正确
+                  if (ethChange === expectedEthAmount) {
+                    Logger.info(`       ✅ 接收金额正确`)
+                  } else {
+                    Logger.info(
+                      `       ⚠️  接收金额不匹配! 实际: ${ethers.formatEther(ethChange)}, 期望: ${ethers.formatEther(expectedEthAmount)}`,
+                    )
+                  }
+                }
+              }
+
               // 批次间延迟（避免 nonce 问题）
               if (batchIndex < batches.length - 1) {
                 const delay = 2000 // 2秒延迟
@@ -478,6 +577,34 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
           Logger.info(`   总 Gas 使用量: ${totalGasUsed}`)
           Logger.info(`   总 Gas 费用: ${ethers.formatEther(totalGasCost)} ETH`)
           Logger.info(`   平均每批次 Gas: ${totalGasUsed / BigInt(batches.length)}`)
+
+          // 🔍 DEBUG: 最终余额变化汇总
+          Logger.info(`\n🔍 [DEBUG] 整体余额变化汇总:`)
+          const finalSenderEthBalance = await hre.ethers.provider.getBalance(signer.address)
+          const initialSenderEthBalance = ethBalance // 使用之前记录的初始余额
+          const totalEthChange = finalSenderEthBalance - initialSenderEthBalance
+
+          Logger.info(`发送者最终余额变化:`)
+          Logger.info(
+            `  ETH: ${ethers.formatEther(initialSenderEthBalance)} -> ${ethers.formatEther(finalSenderEthBalance)} (总变化: ${ethers.formatEther(totalEthChange)} ETH)`,
+          )
+
+          if (type.toLowerCase() === 'token' && tokenContract) {
+            const finalSenderTokenBalance = await tokenContract.balanceOf(signer.address)
+            Logger.info(`  ${tokenSymbol}: 总发送量 ${ethers.formatUnits(totalAmount, decimals)} ${tokenSymbol}`)
+            Logger.info(`  ${tokenSymbol}: 剩余余额 ${ethers.formatUnits(finalSenderTokenBalance, decimals)} ${tokenSymbol}`)
+          } else {
+            Logger.info(`  ${tokenSymbol}: 总发送量 ${ethers.formatUnits(totalAmount, decimals)} ${tokenSymbol}`)
+          }
+
+          Logger.info(`费用分析:`)
+          Logger.info(`  Gas 费用: ${ethers.formatEther(totalGasCost)} ETH`)
+          Logger.info(
+            `  发送金额: ${ethers.formatUnits(totalAmount, decimals)} ${tokenSymbol} ${type.toLowerCase() === 'eth' ? `(${ethers.formatEther(totalAmount)} ETH)` : ''}`,
+          )
+          Logger.info(
+            `  总成本: ${type.toLowerCase() === 'eth' ? ethers.formatEther(totalAmount + totalGasCost) + ' ETH' : ethers.formatEther(totalGasCost) + ' ETH (Gas) + ' + ethers.formatUnits(totalAmount, decimals) + ' ' + tokenSymbol}`,
+          )
 
           result = {
             success: true,

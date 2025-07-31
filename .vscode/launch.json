@@ -410,6 +410,70 @@
         "group": "leaf-shuffle",
         "order": 2
       }
+    },
+    {
+      "name": "📤 MultiSend ETH (Live)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "multi-send",
+        "--network",
+        "localhost",
+        "--csv",
+        "./example-distribution.csv",
+        "--type",
+        "eth",
+        "--batch-size",
+        "10",
+        "--dry-run",
+        "false"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "multi-send",
+        "order": 1
+      }
+    },
+    {
+      "name": "🪙 MultiSend Token (Live)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "multi-send",
+        "--network",
+        "localhost",
+        "--csv",
+        "./example-distribution.csv",
+        "--type",
+        "token",
+        "--batch-size",
+        "3"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "multi-send",
+        "order": 2
+      }
     }
   ]
 }

@@ -2,6 +2,7 @@ import { ethers } from 'ethers'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { task } from 'hardhat/config'
 import { join } from 'path'
+import { coordinator } from './coordinator'
 import { createTimestampFilename, Logger } from './utils'
 
 interface CSVRecord {
@@ -314,7 +315,7 @@ task('multi-send', '使用 MultiSend 合约批量发送 ETH 或 ERC20 代币')
       // 获取 Gas 价格
       const gasPriceWei = gasPrice
         ? ethers.parseUnits(gasPrice, 'gwei')
-        : (await hre.ethers.provider.getFeeData()).gasPrice || ethers.parseUnits('20', 'gwei')
+        : (await coordinator.getGasPriceRecommendation(hre.ethers.provider)).standard
 
       const estimatedGasCost = estimatedGas * gasPriceWei
       Logger.info(`预估 Gas 费用: ${ethers.formatEther(estimatedGasCost)} ETH (${ethers.formatUnits(gasPriceWei, 'gwei')} gwei)`)

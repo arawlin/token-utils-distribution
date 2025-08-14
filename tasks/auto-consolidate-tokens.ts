@@ -4,7 +4,7 @@ import { task } from 'hardhat/config'
 import { join } from 'path'
 import { DistributionSystemConfig } from '../types'
 import { coordinator } from './coordinator'
-import { createTimestampFilename, formatTokenAmount, loadAllWallets, Logger } from './utils'
+import { createTimestampFilename, formatTokenAmount, generateWalletFromPath, loadAllWallets, Logger } from './utils'
 
 interface ConsolidationResult {
   success: number
@@ -137,14 +137,26 @@ task('auto-consolidate-tokens', '自动将所有钱包中的Token归集到指定
 
       Logger.info(`总共加载了 ${allWallets.size} 个钱包地址`)
 
-      // 过滤出需要归集的钱包（排除目标地址）
+      // 过滤出需要归集的钱包（排除目标地址与中间钱包）
       const sourceWallets = new Map<string, ethers.Wallet>()
 
+      // 计算中间钱包地址集合
+      const intermediateAddresses = new Set<string>()
+      if (config?.gasDistribution?.intermediateWallets) {
+        const { hdPath, count } = config.gasDistribution.intermediateWallets
+        for (let i = 0; i < count; i++) {
+          const w = generateWalletFromPath(masterSeed, hdPath, i)
+          intermediateAddresses.add(w.address.toLowerCase())
+        }
+      }
+
       for (const [address, wallet] of allWallets) {
-        if (!targetAddresses.includes(address)) {
+        if (!targetAddresses.includes(address) && !intermediateAddresses.has(address)) {
           sourceWallets.set(address, wallet)
         }
       }
+
+      Logger.info(`已排除中间钱包数量: ${intermediateAddresses.size}`)
 
       Logger.info(`源钱包数量: ${sourceWallets.size}`)
       Logger.info(`目标归集地址数量: ${targetAddresses.length}`)

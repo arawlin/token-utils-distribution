@@ -379,7 +379,7 @@ function generateHierarchicalReport(
 task('wallet-balance', '统计所有钱包地址的ETH和Token余额')
   .addOptionalParam('configDir', '配置目录', './.ws')
   .addOptionalParam('tokenAddress', 'Token合约地址 (如不指定则从配置读取)', '')
-  .addOptionalParam('concurrency', '并发查询数量', '10')
+  .addOptionalParam('concurrency', '并发查询数量', '20')
   .addOptionalParam('delayMs', '批次间延迟(毫秒)', '100')
   .addFlag('detailed', '显示详细的每个地址余额 (默认已开启)')
   .addFlag('sortByEth', '按ETH余额排序 (默认按Token余额排序)')

@@ -47,12 +47,12 @@ task('batch-transfer-token', '批量转账Token到多个地址')
     process.env.FUNDING_WALLET_ADDRESS,
   )
   .addOptionalParam('fundingAmount', '自动转账的ETH数量，默认为所需gas费的指定倍数')
-  .addOptionalParam('fundingMultiplier', '自动转账ETH的扩大倍数', '1.63')
+  .addOptionalParam('fundingMultiplier', '自动转账ETH的扩大倍数', '2.94')
   .addOptionalParam('fundingDelay', '转账后等待时间（毫秒）', '5000')
   .addOptionalParam('ethTransferDelay', '并发执行时ETH转账前等待延迟（毫秒）', '0')
   .addOptionalParam('txTimeout', '交易确认超时时间（毫秒）', '30000')
   .addOptionalParam('txConfirmations', '交易确认数量', '1')
-  .addOptionalParam('txMaxRetries', '交易确认最大重试次数', '1')
+  .addOptionalParam('txMaxRetries', '交易确认最大重试次数', '3')
   .addOptionalParam('txRetryDelay', '交易确认重试间隔（毫秒）', '5000')
   .setAction(async (taskArgs, hre) => {
     const {

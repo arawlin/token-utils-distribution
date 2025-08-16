@@ -489,9 +489,7 @@
         "--concurrency",
         "4",
         "--collectBalances",
-        "true",
-        "--outputFormat",
-        "csv"
+        "true"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
@@ -509,7 +507,7 @@
       }
     },
     {
-      "name": "🔍 Traverse ERC20 Transfers (With Tokens)",
+      "name": "🔍 Traverse ERC20 Transfers (Custom Token)",
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/node_modules/.bin/hardhat",
@@ -517,16 +515,14 @@
         "traverse-transfers",
         "--start",
         "0x9f177216831A8641b79ED709cE3f9f80B2155866",
-        "--tokens",
+        "--tokenAddress",
         "0xF970706063b7853877F39515C96932D49d5AC9Cd",
         "--maxDepth",
         "5",
         "--concurrency",
         "4",
         "--collectBalances",
-        "true",
-        "--outputFormat",
-        "markdown"
+        "true"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
@@ -544,7 +540,7 @@
       }
     },
     {
-      "name": "🔍 Traverse ERC20 Transfers (CSV Output)",
+      "name": "🔍 Traverse ERC20 Transfers (Deep Analysis)",
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/node_modules/.bin/hardhat",
@@ -557,9 +553,7 @@
         "--concurrency",
         "2",
         "--collectBalances",
-        "true",
-        "--outputFormat",
-        "csv"
+        "true"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",

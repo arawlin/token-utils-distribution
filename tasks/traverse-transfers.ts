@@ -7,7 +7,7 @@ import { Logger } from './utils'
 // 类型定义
 interface TraverseOptions {
   startAddress: string
-  tokens?: string[]
+  tokenAddress?: string
   fromBlock?: number
   toBlock?: number
   maxDepth?: number
@@ -22,14 +22,14 @@ interface TraverseOptions {
   allowContractsAsEndpoints?: boolean
   useOnchainBalanceForEndpoint?: boolean
   output?: string
-  outputFormat?: 'markdown' | 'text' | 'csv'
+  outputFormat?: 'csv'
   atomicWrite?: boolean
   streamThreshold?: number
 }
 
 interface InternalTraverseOptions extends Omit<TraverseOptions, 'fromBlock' | 'toBlock'> {
   startAddress: string
-  tokens: string[]
+  tokenAddress: string
   fromBlock?: number
   toBlock?: number
   maxDepth: number
@@ -44,7 +44,7 @@ interface InternalTraverseOptions extends Omit<TraverseOptions, 'fromBlock' | 't
   allowContractsAsEndpoints: boolean
   useOnchainBalanceForEndpoint: boolean
   output: string
-  outputFormat: 'markdown' | 'text' | 'csv'
+  outputFormat: 'csv'
   atomicWrite: boolean
   streamThreshold: number
 }
@@ -77,7 +77,6 @@ interface Node {
 
 interface EndpointSummary {
   address: string
-  token: string
   paths: string[]
   onchainBalance?: string
   netReceived: string
@@ -192,16 +191,24 @@ class TransferTraverser {
   private errors: string[] = []
   private runId: string
   private startTime: number
+  private tokenDecimals?: number
+  private tokenSymbol?: string
 
   constructor(provider: ethers.Provider, options: TraverseOptions) {
     this.provider = provider
     this.runId = `traverse-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     this.startTime = Date.now()
 
+    // 获取 token 地址
+    const tokenAddress = options.tokenAddress || process.env.TOKEN_ADDRESS
+    if (!tokenAddress) {
+      throw new Error('Token 地址未指定，请设置 TOKEN_ADDRESS 环境变量或传入 tokenAddress 参数')
+    }
+
     // 设置默认值
     this.options = {
       startAddress: options.startAddress,
-      tokens: options.tokens || [],
+      tokenAddress,
       fromBlock: options.fromBlock,
       toBlock: options.toBlock,
       maxDepth: options.maxDepth || 10,
@@ -218,8 +225,8 @@ class TransferTraverser {
       maxVisitedNodes: options.maxVisitedNodes || 10000,
       allowContractsAsEndpoints: options.allowContractsAsEndpoints !== false,
       useOnchainBalanceForEndpoint: options.useOnchainBalanceForEndpoint !== false,
-      output: options.output || path.join('.ws', 'traverse-result.md'),
-      outputFormat: options.outputFormat || 'markdown',
+      output: options.output || path.join('.ws', 'traverse-result.csv'),
+      outputFormat: options.outputFormat || 'csv',
       atomicWrite: options.atomicWrite !== false,
       streamThreshold: options.streamThreshold || 5_000_000,
     }
@@ -227,6 +234,7 @@ class TransferTraverser {
     this.rateLimiter = new RateLimiter(this.options.concurrency, this.options.rpcRateLimit)
 
     Logger.info(`🚀 TransferTraverser 初始化完成 - runId: ${this.runId}`)
+    Logger.info(`🪙 使用 Token 地址: ${this.options.tokenAddress}`)
   }
 
   async traverse(): Promise<TraverseResult> {
@@ -237,19 +245,13 @@ class TransferTraverser {
     Logger.info(`   - 区块范围: ${this.options.fromBlock || 'earliest'} -> ${this.options.toBlock || 'latest'}`)
     Logger.info(`   - 收集余额: ${this.options.collectAllBalances}`)
     Logger.info(`   - 输出格式: ${this.options.outputFormat}`)
+    Logger.info(`   - Token 地址: ${this.options.tokenAddress}`)
     Logger.info(`   - RunID: ${this.runId}`)
 
     try {
-      // 如果没有指定 tokens，尝试自动检测
-      if (this.options.tokens.length === 0) {
-        Logger.info(`🔍 未指定 Token 地址，开始自动检测...`)
-        this.options.tokens = await this.detectTokensFromAddress(this.options.startAddress)
-        if (this.options.tokens.length === 0) {
-          Logger.warn(`⚠️ 未检测到任何 Token 转账，任务可能无法找到路径`)
-        }
-      } else {
-        Logger.info(`🪙 指定的 Token 地址 (${this.options.tokens.length} 个): ${this.options.tokens.join(', ')}`)
-      }
+      // 获取 token 信息
+      Logger.info(`🔍 获取 Token 信息...`)
+      await this.fetchTokenInfo()
 
       // BFS 遍历
       Logger.info(`🔄 开始 BFS 遍历...`)
@@ -290,41 +292,43 @@ class TransferTraverser {
     }
   }
 
-  private async detectTokensFromAddress(address: string): Promise<string[]> {
-    Logger.info(`🔍 自动检测地址 ${address} 的 token 转账...`)
-    Logger.info(`📦 查询区块范围: ${this.options.fromBlock || 'earliest'} -> ${this.options.toBlock || 'latest'}`)
+  private async fetchTokenInfo() {
+    try {
+      const contract = new ethers.Contract(this.options.tokenAddress, ERC20_ABI, this.provider)
+
+      // 获取 decimals 和 symbol
+      const [decimals, symbol] = await Promise.all([
+        this.rateLimiter.schedule(() => contract.decimals()),
+        this.rateLimiter.schedule(() => contract.symbol()),
+      ])
+
+      this.tokenDecimals = Number(decimals)
+      this.tokenSymbol = symbol
+
+      Logger.info(`💰 Token 信息:`)
+      Logger.info(`   - Symbol: ${this.tokenSymbol}`)
+      Logger.info(`   - Decimals: ${this.tokenDecimals}`)
+    } catch (error) {
+      Logger.warn(`⚠️ 获取 Token 信息失败: ${error}`)
+      Logger.warn(`使用默认值: decimals=18, symbol="Token"`)
+      this.tokenDecimals = 18
+      this.tokenSymbol = 'Token'
+    }
+  }
+
+  private formatAmount(amount: string): string {
+    if (!this.tokenDecimals) return amount
 
     try {
-      const filter = {
-        fromBlock: this.options.fromBlock || 'earliest',
-        toBlock: this.options.toBlock || 'latest',
-        topics: [TRANSFER_EVENT_SIGNATURE, ethers.zeroPadValue(address, 32)],
-      }
-
-      Logger.info(`🔎 开始查询转账日志...`)
-      const logsStartTime = Date.now()
-      const logs = await this.rateLimiter.schedule(() => this.provider.getLogs(filter))
-      const logsTime = Date.now() - logsStartTime
-      Logger.info(`📋 查询到 ${logs.length} 条日志，耗时: ${logsTime}ms`)
-
-      const tokens = new Set<string>()
-      logs.forEach(log => tokens.add(log.address))
-
-      const tokenArray = Array.from(tokens).slice(0, 10) // 限制最多 10 个 token
-      Logger.info(`🪙 检测到 ${tokenArray.length} 个唯一 token:`)
-      tokenArray.forEach((token, index) => {
-        Logger.info(`   ${index + 1}. ${token}`)
-      })
-
-      if (tokenArray.length === 10) {
-        Logger.warn(`⚠️ Token 数量达到上限 (10)，可能还有更多未显示`)
-      }
-
-      return tokenArray
+      const value = ethers.formatUnits(amount, this.tokenDecimals)
+      // 格式化为最多 6 位小数，去掉尾部零
+      const formatted = parseFloat(value)
+        .toFixed(6)
+        .replace(/\.?0+$/, '')
+      return `${formatted} ${this.tokenSymbol || ''}`
     } catch (error) {
-      Logger.error(`❌ 自动检测 token 失败: ${error}`)
-      this.errors.push(`Token detection failed: ${error}`)
-      return []
+      Logger.warn(`⚠️ 格式化金额失败: ${error}`)
+      return amount
     }
   }
 
@@ -413,45 +417,42 @@ class TransferTraverser {
     const transfers: TransferEvent[] = []
     Logger.debug(`🔎 查询地址 ${address} 的转出记录 (深度: ${depth})`)
 
-    for (let i = 0; i < this.options.tokens.length; i++) {
-      const token = this.options.tokens[i]
-      try {
-        Logger.debug(`   查询 Token ${i + 1}/${this.options.tokens.length}: ${token}`)
+    try {
+      Logger.debug(`   查询 Token: ${this.options.tokenAddress}`)
 
-        const filter = {
-          address: token,
-          fromBlock: this.options.fromBlock || 'earliest',
-          toBlock: this.options.toBlock || 'latest',
-          topics: [
-            TRANSFER_EVENT_SIGNATURE,
-            ethers.zeroPadValue(address, 32), // from
-            null, // to (any)
-          ],
-        }
-
-        const queryStartTime = Date.now()
-        const logs = await this.rateLimiter.schedule(() => this.provider.getLogs(filter))
-        const queryTime = Date.now() - queryStartTime
-
-        Logger.debug(`   获得 ${logs.length} 条日志，耗时: ${queryTime}ms`)
-
-        for (const log of logs) {
-          const transferEvent = this.parseTransferEvent(log, token)
-          if (transferEvent && !this.isDuplicateEdge(transferEvent)) {
-            transfers.push(transferEvent)
-            this.allEdges.push(transferEvent)
-          }
-        }
-      } catch (error) {
-        Logger.error(`❌ 获取 token ${token} 的转账失败: ${error}`)
-        this.errors.push(`Failed to fetch transfers for token ${token}: ${error}`)
+      const filter = {
+        address: this.options.tokenAddress,
+        fromBlock: this.options.fromBlock || 'earliest',
+        toBlock: this.options.toBlock || 'latest',
+        topics: [
+          TRANSFER_EVENT_SIGNATURE,
+          ethers.zeroPadValue(address, 32), // from
+          null, // to (any)
+        ],
       }
+
+      const queryStartTime = Date.now()
+      const logs = await this.rateLimiter.schedule(() => this.provider.getLogs(filter))
+      const queryTime = Date.now() - queryStartTime
+
+      Logger.debug(`   获得 ${logs.length} 条日志，耗时: ${queryTime}ms`)
+
+      for (const log of logs) {
+        const transferEvent = this.parseTransferEvent(log, this.options.tokenAddress)
+        if (transferEvent && !this.isDuplicateEdge(transferEvent)) {
+          transfers.push(transferEvent)
+          this.allEdges.push(transferEvent)
+        }
+      }
+    } catch (error) {
+      Logger.error(`❌ 获取 token ${this.options.tokenAddress} 的转账失败: ${error}`)
+      this.errors.push(`Failed to fetch transfers for token ${this.options.tokenAddress}: ${error}`)
     }
 
     if (transfers.length > 0) {
       Logger.debug(`📤 地址 ${address} 发出 ${transfers.length} 笔转账`)
       transfers.forEach((transfer, index) => {
-        Logger.debug(`   ${index + 1}. ${transfer.from} -> ${transfer.to} (${transfer.amount} ${transfer.token})`)
+        Logger.debug(`   ${index + 1}. ${transfer.from} -> ${transfer.to} (${transfer.amount})`)
       })
     } else {
       Logger.debug(`📭 地址 ${address} 无转出记录`)
@@ -540,7 +541,7 @@ class TransferTraverser {
   private async collectAllBalances() {
     Logger.info(`💰 开始收集所有地址余额...`)
     Logger.info(`📊 需要查询的地址数: ${this.allNodes.size}`)
-    Logger.info(`🪙 需要查询的 Token 数: ${this.options.tokens.length}`)
+    Logger.info(`🪙 查询 Token: ${this.options.tokenAddress}`)
     Logger.info(`📦 批次大小: ${this.options.balanceBatchSize}`)
 
     const addresses = Array.from(this.allNodes.keys())
@@ -574,17 +575,14 @@ class TransferTraverser {
     Logger.debug(`💰 查询地址 ${address} 的余额`)
     node.balances = {}
 
-    for (let i = 0; i < this.options.tokens.length; i++) {
-      const token = this.options.tokens[i]
-      try {
-        const contract = new ethers.Contract(token, ERC20_ABI, this.provider)
-        const balance = await this.rateLimiter.schedule(() => contract.balanceOf(address))
-        node.balances[token] = balance.toString()
-        Logger.debug(`   Token ${i + 1}: ${balance.toString()}`)
-      } catch (error) {
-        Logger.warn(`⚠️ 获取地址 ${address} token ${token} 余额失败: ${error}`)
-        node.balances[token] = 'ERROR'
-      }
+    try {
+      const contract = new ethers.Contract(this.options.tokenAddress, ERC20_ABI, this.provider)
+      const balance = await this.rateLimiter.schedule(() => contract.balanceOf(address))
+      node.balances[this.options.tokenAddress] = balance.toString()
+      Logger.debug(`   余额: ${balance.toString()}`)
+    } catch (error) {
+      Logger.warn(`⚠️ 获取地址 ${address} 余额失败: ${error}`)
+      node.balances[this.options.tokenAddress] = 'ERROR'
     }
 
     // 检查是否为合约
@@ -612,7 +610,7 @@ class TransferTraverser {
     return {
       metadata: {
         startAddress: this.options.startAddress,
-        tokens: this.options.tokens,
+        tokens: [this.options.tokenAddress],
         fromBlock: this.options.fromBlock,
         toBlock: this.options.toBlock,
         maxDepth: this.options.maxDepth,
@@ -647,20 +645,17 @@ class TransferTraverser {
 
       if (!lastEdge) continue
 
-      const key = `${endpoint}-${lastEdge.token}`
-
-      if (!endpointMap.has(key)) {
+      if (!endpointMap.has(endpoint)) {
         const node = this.allNodes.get(endpoint)
-        endpointMap.set(key, {
+        endpointMap.set(endpoint, {
           address: endpoint,
-          token: lastEdge.token,
           paths: [],
           netReceived: '0',
-          onchainBalance: node?.balances?.[lastEdge.token],
+          onchainBalance: node?.balances?.[this.options.tokenAddress],
         })
       }
 
-      const summary = endpointMap.get(key)!
+      const summary = endpointMap.get(endpoint)!
       summary.paths.push(path.id)
       summary.netReceived = (BigInt(summary.netReceived) + BigInt(lastEdge.amount)).toString()
     }
@@ -672,174 +667,17 @@ class TransferTraverser {
     Logger.info(`💾 保存结果到文件: ${this.options.output}`)
 
     try {
-      let content: string
-
       switch (this.options.outputFormat) {
-        case 'markdown':
-          content = this.generateMarkdownOutput(result)
-          break
-        case 'text':
-          content = this.generateTextOutput(result)
-          break
         case 'csv':
           await this.generateCSVOutput(result)
           return
         default:
           throw new Error(`不支持的输出格式: ${this.options.outputFormat}`)
       }
-
-      if (this.options.atomicWrite) {
-        const tempFile = `${this.options.output}.tmp`
-        await fs.promises.writeFile(tempFile, content, 'utf8')
-        await fs.promises.rename(tempFile, this.options.output)
-      } else {
-        await fs.promises.writeFile(this.options.output, content, 'utf8')
-      }
-
-      Logger.info(`✅ 结果已保存: ${this.options.output}`)
     } catch (error) {
       Logger.error(`❌ 保存结果失败: ${error}`)
       throw error
     }
-  }
-
-  private generateMarkdownOutput(result: TraverseResult): string {
-    const lines: string[] = []
-
-    // 标题和元数据
-    lines.push('# ERC-20 Transfer Path Traverse Report')
-    lines.push('')
-    lines.push('## Metadata')
-    lines.push('| Key | Value |')
-    lines.push('|-----|-------|')
-    lines.push(`| Start Address | ${result.metadata.startAddress} |`)
-    lines.push(`| Tokens | ${result.metadata.tokens.join(', ') || 'Auto-detected'} |`)
-    lines.push(`| From Block | ${result.metadata.fromBlock || 'earliest'} |`)
-    lines.push(`| To Block | ${result.metadata.toBlock || 'latest'} |`)
-    lines.push(`| Max Depth | ${result.metadata.maxDepth} |`)
-    lines.push(`| Collect All Balances | ${result.metadata.collectAllBalances} |`)
-    lines.push(`| Balance Mode | ${result.metadata.balanceMode} |`)
-    lines.push(`| Concurrency | ${result.metadata.concurrency} |`)
-    lines.push(`| Timestamp | ${result.metadata.timestamp} |`)
-    lines.push(`| Run ID | ${result.metadata.runId} |`)
-    lines.push('')
-
-    // 快速统计
-    lines.push('## Quick Stats')
-    lines.push(`- **Paths Found**: ${result.stats.pathsFound}`)
-    lines.push(`- **Total Transfer Events**: ${result.stats.edges}`)
-    lines.push(`- **Unique Addresses**: ${result.stats.uniqueAddresses}`)
-    lines.push(`- **Visited Nodes**: ${result.stats.visitedNodes}`)
-    lines.push(`- **Total Transfer Value**: ${result.stats.totalTransferValue}`)
-    lines.push(`- **Execution Time**: ${result.stats.executionTimeMs}ms`)
-    lines.push('')
-
-    // Endpoints 汇总
-    if (result.endpoints.length > 0) {
-      lines.push('## Endpoints Summary')
-      lines.push('| # | Address | Token | Net Received | Onchain Balance | Paths Count |')
-      lines.push('|---|---------|-------|--------------|-----------------|-------------|')
-
-      result.endpoints.forEach((endpoint, index) => {
-        lines.push(
-          `| ${index + 1} | ${endpoint.address} | ${endpoint.token} | ${endpoint.netReceived} | ${endpoint.onchainBalance || 'N/A'} | ${endpoint.paths.length} |`,
-        )
-      })
-      lines.push('')
-    }
-
-    // 详细路径
-    if (result.paths.length > 0) {
-      lines.push('## Detailed Paths')
-
-      result.paths.forEach((path, index) => {
-        lines.push(`### Path #${index + 1}`)
-        lines.push(`- **Endpoint**: ${path.endpoint}`)
-        lines.push(`- **Depth**: ${path.depth}`)
-        lines.push(`- **Total Amount**: ${path.totalAmount}`)
-        lines.push('- **Edges**:')
-
-        path.edges.forEach((edge, edgeIndex) => {
-          lines.push(
-            `  ${edgeIndex + 1}. **Token**: ${edge.token}, **From**: ${edge.from}, **To**: ${edge.to}, **Amount**: ${edge.amount}, **Tx**: ${edge.txHash}, **Block**: ${edge.blockNumber}`,
-          )
-        })
-        lines.push('')
-      })
-    }
-
-    // 节点信息（示例前20个）
-    if (result.nodes.length > 0) {
-      lines.push('## Nodes (Sample)')
-      const sampleNodes = result.nodes.slice(0, 20)
-
-      sampleNodes.forEach(node => {
-        lines.push(`### ${node.address}`)
-        lines.push(`- **Is Contract**: ${node.isContract || 'Unknown'}`)
-        lines.push(`- **First Seen Block**: ${node.firstSeenBlock}`)
-
-        if (node.balances && Object.keys(node.balances).length > 0) {
-          lines.push('- **Balances**:')
-          Object.entries(node.balances).forEach(([token, balance]) => {
-            lines.push(`  - ${token}: ${balance}`)
-          })
-        }
-        lines.push('')
-      })
-
-      if (result.nodes.length > 20) {
-        lines.push(`... and ${result.nodes.length - 20} more nodes`)
-        lines.push('')
-      }
-    }
-
-    // 错误和警告
-    if (result.errors.length > 0) {
-      lines.push('## Errors and Warnings')
-      result.errors.forEach((error, index) => {
-        lines.push(`${index + 1}. ${error}`)
-      })
-      lines.push('')
-    }
-
-    return lines.join('\n')
-  }
-
-  private generateTextOutput(result: TraverseResult): string {
-    const lines: string[] = []
-
-    lines.push('ERC-20 TRANSFER PATH TRAVERSE REPORT')
-    lines.push('=====================================')
-    lines.push('')
-
-    lines.push('METADATA')
-    lines.push('--------')
-    lines.push(`Start Address: ${result.metadata.startAddress}`)
-    lines.push(`Tokens: ${result.metadata.tokens.join(', ') || 'Auto-detected'}`)
-    lines.push(`From Block: ${result.metadata.fromBlock || 'earliest'}`)
-    lines.push(`To Block: ${result.metadata.toBlock || 'latest'}`)
-    lines.push(`Max Depth: ${result.metadata.maxDepth}`)
-    lines.push(`Collect All Balances: ${result.metadata.collectAllBalances}`)
-    lines.push(`Balance Mode: ${result.metadata.balanceMode}`)
-    lines.push(`Concurrency: ${result.metadata.concurrency}`)
-    lines.push(`Timestamp: ${result.metadata.timestamp}`)
-    lines.push(`Run ID: ${result.metadata.runId}`)
-    lines.push('')
-
-    lines.push('QUICK STATS')
-    lines.push('-----------')
-    lines.push(`Paths Found: ${result.stats.pathsFound}`)
-    lines.push(`Total Transfer Events: ${result.stats.edges}`)
-    lines.push(`Unique Addresses: ${result.stats.uniqueAddresses}`)
-    lines.push(`Visited Nodes: ${result.stats.visitedNodes}`)
-    lines.push(`Total Transfer Value: ${result.stats.totalTransferValue}`)
-    lines.push(`Execution Time: ${result.stats.executionTimeMs}ms`)
-    lines.push('')
-
-    // 其余部分类似，但使用纯文本格式
-    // ... (省略详细实现，格式类似但无markdown语法)
-
-    return lines.join('\n')
   }
 
   private async generateCSVOutput(result: TraverseResult) {
@@ -865,13 +703,13 @@ class TransferTraverser {
   }
 
   private generateEdgesCSV(edges: TransferEvent[]): string {
-    const headers = ['ID', 'Token', 'From', 'To', 'Amount', 'TxHash', 'LogIndex', 'BlockNumber']
+    const headers = ['ID', 'From', 'To', 'Amount_Raw', 'Amount_Formatted', 'TxHash', 'LogIndex', 'BlockNumber']
     const rows = edges.map(edge => [
       edge.id,
-      edge.token,
       edge.from,
       edge.to,
       edge.amount,
+      this.formatAmount(edge.amount),
       edge.txHash,
       edge.logIndex.toString(),
       edge.blockNumber.toString(),
@@ -881,24 +719,29 @@ class TransferTraverser {
   }
 
   private generateNodesCSV(nodes: Node[]): string {
-    const headers = ['Address', 'IsContract', 'FirstSeenBlock', 'Balances']
-    const rows = nodes.map(node => [
-      node.address,
-      (node.isContract || false).toString(),
-      (node.firstSeenBlock || 0).toString(),
-      JSON.stringify(node.balances || {}),
-    ])
+    const headers = ['Address', 'IsContract', 'FirstSeenBlock', 'Balance_Raw', 'Balance_Formatted']
+    const rows = nodes.map(node => {
+      const rawBalance = node.balances?.[this.options.tokenAddress] || '0'
+      return [
+        node.address,
+        (node.isContract || false).toString(),
+        (node.firstSeenBlock || 0).toString(),
+        rawBalance,
+        rawBalance !== 'ERROR' ? this.formatAmount(rawBalance) : 'ERROR',
+      ]
+    })
 
     return [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
   }
 
   private generateEndpointsCSV(endpoints: EndpointSummary[]): string {
-    const headers = ['Address', 'Token', 'NetReceived', 'OnchainBalance', 'PathsCount']
+    const headers = ['Address', 'NetReceived_Raw', 'NetReceived_Formatted', 'OnchainBalance_Raw', 'OnchainBalance_Formatted', 'PathsCount']
     const rows = endpoints.map(endpoint => [
       endpoint.address,
-      endpoint.token,
       endpoint.netReceived,
+      this.formatAmount(endpoint.netReceived),
       endpoint.onchainBalance || '',
+      endpoint.onchainBalance ? this.formatAmount(endpoint.onchainBalance) : '',
       endpoint.paths.length.toString(),
     ])
 
@@ -906,8 +749,15 @@ class TransferTraverser {
   }
 
   private generatePathsCSV(paths: TransferPath[]): string {
-    const headers = ['PathID', 'Endpoint', 'Depth', 'TotalAmount', 'EdgeCount']
-    const rows = paths.map(path => [path.id, path.endpoint, path.depth.toString(), path.totalAmount, path.edges.length.toString()])
+    const headers = ['PathID', 'Endpoint', 'Depth', 'TotalAmount_Raw', 'TotalAmount_Formatted', 'EdgeCount']
+    const rows = paths.map(path => [
+      path.id,
+      path.endpoint,
+      path.depth.toString(),
+      path.totalAmount,
+      this.formatAmount(path.totalAmount),
+      path.edges.length.toString(),
+    ])
 
     return [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
   }
@@ -916,7 +766,7 @@ class TransferTraverser {
 // Hardhat Task 定义
 task('traverse-transfers', 'Traverse ERC-20 transfer paths from a starting address')
   .addParam('start', 'Starting address to traverse from')
-  .addOptionalParam('tokens', 'Comma-separated list of token addresses')
+  .addOptionalParam('tokenAddress', 'Token contract address', process.env.TOKEN_ADDRESS)
   .addOptionalParam('fromBlock', 'Starting block number', undefined, undefined)
   .addOptionalParam('toBlock', 'Ending block number', undefined, undefined)
   .addOptionalParam('maxDepth', 'Maximum traversal depth', '10')
@@ -924,7 +774,6 @@ task('traverse-transfers', 'Traverse ERC-20 transfer paths from a starting addre
   .addOptionalParam('collectBalances', 'Collect all address balances', 'true')
   .addOptionalParam('balanceMode', 'Balance aggregation mode', 'onchain')
   .addOptionalParam('configDir', '配置目录', './.ws')
-  .addOptionalParam('outputFormat', 'Output format', 'csv')
   .setAction(async (taskArgs, hre) => {
     const { ethers } = hre
 
@@ -940,14 +789,14 @@ task('traverse-transfers', 'Traverse ERC-20 transfer paths from a starting addre
     // 记录输入参数
     Logger.info('📋 输入参数:')
     Logger.info(`   起始地址: ${taskArgs.start}`)
-    Logger.info(`   Token 地址: ${taskArgs.tokens || '自动检测'}`)
+    Logger.info(`   Token 地址: ${taskArgs.tokenAddress || process.env.TOKEN_ADDRESS || '未设置'}`)
     Logger.info(`   起始区块: ${taskArgs.fromBlock || 'earliest'}`)
     Logger.info(`   结束区块: ${taskArgs.toBlock || 'latest'}`)
     Logger.info(`   最大深度: ${taskArgs.maxDepth}`)
     Logger.info(`   并发数: ${taskArgs.concurrency}`)
     Logger.info(`   收集余额: ${taskArgs.collectBalances}`)
     Logger.info(`   余额模式: ${taskArgs.balanceMode}`)
-    Logger.info(`   输出格式: ${taskArgs.outputFormat}`)
+    Logger.info(`   输出格式: CSV`)
     Logger.info(`   配置目录: ${taskArgs.configDir}`)
 
     try {
@@ -967,17 +816,13 @@ task('traverse-transfers', 'Traverse ERC-20 transfer paths from a starting addre
       }
 
       // 设置输出文件路径到 .ws 目录
-      const outputFile = path.join(
-        taskArgs.configDir,
-        'traverse-result',
-        `traverse-result-${timestamp}.${taskArgs.outputFormat === 'csv' ? 'csv' : 'md'}`,
-      )
+      const outputFile = path.join(taskArgs.configDir, 'traverse-result', `traverse-result-${timestamp}.csv`)
       Logger.info(`📄 输出文件: ${outputFile}`)
 
       // 准备参数
       const options: TraverseOptions = {
         startAddress: taskArgs.start,
-        tokens: taskArgs.tokens ? taskArgs.tokens.split(',').map((t: string) => t.trim()) : [],
+        tokenAddress: taskArgs.tokenAddress,
         fromBlock: taskArgs.fromBlock ? parseInt(taskArgs.fromBlock) : undefined,
         toBlock: taskArgs.toBlock ? parseInt(taskArgs.toBlock) : undefined,
         maxDepth: parseInt(taskArgs.maxDepth),
@@ -985,7 +830,7 @@ task('traverse-transfers', 'Traverse ERC-20 transfer paths from a starting addre
         collectAllBalances: taskArgs.collectBalances === 'true',
         balanceAggregationMode: taskArgs.balanceMode as 'onchain' | 'derived' | 'both',
         output: outputFile,
-        outputFormat: taskArgs.outputFormat as 'markdown' | 'text' | 'csv',
+        outputFormat: 'csv',
       }
 
       // 准备 provider

@@ -682,17 +682,16 @@ class TransferTraverser {
 
   private async generateCSVOutput(result: TraverseResult) {
     const basePath = path.dirname(this.options.output)
-    const baseName = path.basename(this.options.output, path.extname(this.options.output))
 
     // 确保目录存在
     await fs.promises.mkdir(basePath, { recursive: true })
 
-    // 生成多个 CSV 文件
+    // 生成多个 CSV 文件，使用固定的文件名
     const files = [
-      { name: `${baseName}_edges.csv`, content: this.generateEdgesCSV(result.edges) },
-      { name: `${baseName}_nodes.csv`, content: this.generateNodesCSV(result.nodes) },
-      { name: `${baseName}_endpoints.csv`, content: this.generateEndpointsCSV(result.endpoints) },
-      { name: `${baseName}_paths.csv`, content: this.generatePathsCSV(result.paths) },
+      { name: 'edges.csv', content: this.generateEdgesCSV(result.edges) },
+      { name: 'nodes.csv', content: this.generateNodesCSV(result.nodes) },
+      { name: 'endpoints.csv', content: this.generateEndpointsCSV(result.endpoints) },
+      { name: 'paths.csv', content: this.generatePathsCSV(result.paths) },
     ]
 
     for (const file of files) {
@@ -808,16 +807,17 @@ task('traverse-transfers', 'Traverse ERC-20 transfer paths from a starting addre
         fs.mkdirSync(taskArgs.configDir, { recursive: true })
       }
 
-      // 创建 traverse-result 子目录
-      const resultDir = path.join(taskArgs.configDir, 'traverse-result')
+      // 创建带时间戳的结果子目录
+      const resultDir = path.join(taskArgs.configDir, 'traverse-result', `traverse-${timestamp}`)
       if (!fs.existsSync(resultDir)) {
         Logger.info(`📁 创建结果目录: ${resultDir}`)
         fs.mkdirSync(resultDir, { recursive: true })
       }
 
-      // 设置输出文件路径到 .ws 目录
-      const outputFile = path.join(taskArgs.configDir, 'traverse-result', `traverse-result-${timestamp}.csv`)
-      Logger.info(`📄 输出文件: ${outputFile}`)
+      // 设置输出文件路径到带时间戳的子目录
+      const outputFile = path.join(resultDir, 'traverse-result.csv')
+      Logger.info(`📄 输出目录: ${resultDir}`)
+      Logger.info(`📄 基础文件名: traverse-result.csv`)
 
       // 准备参数
       const options: TraverseOptions = {

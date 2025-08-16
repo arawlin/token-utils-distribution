@@ -474,6 +474,107 @@
         "group": "multi-send",
         "order": 2
       }
+    },
+    {
+      "name": "🔍 Traverse ERC20 Transfers (Basic)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "traverse-transfers",
+        "--start",
+        "0x9f177216831A8641b79ED709cE3f9f80B2155866",
+        "--maxDepth",
+        "5",
+        "--concurrency",
+        "4",
+        "--collectBalances",
+        "true",
+        "--outputFormat",
+        "csv"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "analysis",
+        "order": 1
+      }
+    },
+    {
+      "name": "🔍 Traverse ERC20 Transfers (With Tokens)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "traverse-transfers",
+        "--start",
+        "0x9f177216831A8641b79ED709cE3f9f80B2155866",
+        "--tokens",
+        "0xF970706063b7853877F39515C96932D49d5AC9Cd",
+        "--maxDepth",
+        "5",
+        "--concurrency",
+        "4",
+        "--collectBalances",
+        "true",
+        "--outputFormat",
+        "markdown"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "analysis",
+        "order": 2
+      }
+    },
+    {
+      "name": "🔍 Traverse ERC20 Transfers (CSV Output)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/hardhat",
+      "args": [
+        "traverse-transfers",
+        "--start",
+        "0x9f177216831A8641b79ED709cE3f9f80B2155866",
+        "--maxDepth",
+        "3",
+        "--concurrency",
+        "2",
+        "--collectBalances",
+        "true",
+        "--outputFormat",
+        "csv"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "presentation": {
+        "group": "analysis",
+        "order": 3
+      }
     }
   ]
 }

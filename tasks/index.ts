@@ -11,6 +11,7 @@ import './manual-transfer'
 import './manual-transfer-token'
 import './multi-send'
 import './obfuscation'
+import './traverse-transfers'
 import './validate-csv'
 import './wallet-balance'
 

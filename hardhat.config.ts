@@ -42,7 +42,7 @@ const config: HardhatUserConfig = {
   namedAccounts: {
     deployer: 0,
   },
-  // defaultNetwork: 'localhost',
+  defaultNetwork: 'mainnet',
   networks: {
     localhost: {
       url: 'http://127.0.0.1:8545',

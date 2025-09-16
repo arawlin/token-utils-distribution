@@ -2,6 +2,7 @@
 import './auto-consolidate-tokens'
 import './batch-transfer-eth'
 import './batch-transfer-token'
+import './derive-path-addresses'
 import './distribute-gas'
 import './distribute-tokens'
 import './hierarchical-distribution'

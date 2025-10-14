@@ -18,7 +18,10 @@ interface BitqueryCurrency {
   address?: string | null
   symbol?: string | null
   name?: string | null
-  tokenType?: string | null
+  protocolName?: string | null
+  decimals?: number | null
+  native?: boolean | null
+  fungible?: boolean | null
 }
 
 interface BitqueryBalanceEntry {
@@ -97,7 +100,10 @@ interface AddressBalanceSummary {
     symbol?: string
     tokenAddress?: string
     name?: string
-    tokenType?: string
+    protocolName?: string
+    decimals?: number
+    native?: boolean
+    fungible?: boolean
     rawBalance?: string
     value?: string
     valueUsd?: string
@@ -115,7 +121,10 @@ interface TransferLog {
   symbol?: string
   tokenAddress?: string
   tokenName?: string
-  tokenType?: string
+  protocolName?: string
+  decimals?: number
+  native?: boolean
+  fungible?: boolean
 }
 
 interface ContractInteractionLog {
@@ -132,12 +141,19 @@ interface ContractInteractionLog {
   signature?: string
 }
 
+interface TransferCounterpartySummary {
+  direction: 'in' | 'out'
+  counterparty: string
+  transferCount: number
+}
+
 interface NetworkActivitySummary {
   network: string
   balances: AddressBalanceSummary[]
   assetTransfers: TransferLog[]
   contractInteractions: ContractInteractionLog[]
   interactedContracts: ContractInteractionSummary[]
+  transferCounterparties: TransferCounterpartySummary[]
 }
 
 function sanitizeNetworkName(network: string): string {
@@ -167,6 +183,10 @@ function buildNetworkQuery(network: string): string {
             address: SmartContract
             symbol: Symbol
             name: Name
+            protocolName: ProtocolName
+            decimals: Decimals
+            native: Native
+            fungible: Fungible
           }
         }
         transfersSent: Transfers(
@@ -190,6 +210,10 @@ function buildNetworkQuery(network: string): string {
               address: SmartContract
               symbol: Symbol
               name: Name
+              protocolName: ProtocolName
+              decimals: Decimals
+              native: Native
+              fungible: Fungible
             }
           }
         }
@@ -214,6 +238,10 @@ function buildNetworkQuery(network: string): string {
               address: SmartContract
               symbol: Symbol
               name: Name
+              protocolName: ProtocolName
+              decimals: Decimals
+              native: Native
+              fungible: Fungible
             }
           }
         }
@@ -414,7 +442,10 @@ function mapBalances(records: BitqueryBalanceEntry[] | null | undefined): Addres
       symbol: record.currency?.symbol ?? undefined,
       tokenAddress: record.currency?.address ?? undefined,
       name: record.currency?.name ?? undefined,
-      tokenType: record.currency?.tokenType ?? undefined,
+      protocolName: record.currency?.protocolName ?? undefined,
+      decimals: record.currency?.decimals ?? undefined,
+      native: record.currency?.native ?? undefined,
+      fungible: record.currency?.fungible ?? undefined,
       rawBalance: record.balance?.amount ?? undefined,
       value: record.balance?.amount ?? undefined,
       valueUsd: record.balance?.amountUsd ?? undefined,
@@ -443,7 +474,10 @@ function mapTransfers(records: BitqueryTransferEntry[] | null | undefined, direc
       symbol: transfer?.currency?.symbol ?? undefined,
       tokenAddress: transfer?.currency?.address ?? undefined,
       tokenName: transfer?.currency?.name ?? undefined,
-      tokenType: transfer?.currency?.tokenType ?? undefined,
+      protocolName: transfer?.currency?.protocolName ?? undefined,
+      decimals: transfer?.currency?.decimals ?? undefined,
+      native: transfer?.currency?.native ?? undefined,
+      fungible: transfer?.currency?.fungible ?? undefined,
     }
   })
 }
@@ -501,6 +535,30 @@ function mapContractInteractions(records: BitqueryContractCallEntry[] | null | u
   }
 }
 
+function summarizeTransferCounterparties(transfers: TransferLog[]): TransferCounterpartySummary[] {
+  const summaryMap = new Map<string, TransferCounterpartySummary>()
+
+  for (const transfer of transfers) {
+    const direction = transfer.direction
+    const counterparty = direction === 'out' ? transfer.receiver : transfer.sender
+    if (!counterparty) continue
+
+    const key = `${direction}:${counterparty.toLowerCase()}`
+    const existing = summaryMap.get(key)
+    if (existing) {
+      existing.transferCount += 1
+    } else {
+      summaryMap.set(key, {
+        direction,
+        counterparty,
+        transferCount: 1,
+      })
+    }
+  }
+
+  return Array.from(summaryMap.values()).sort((a, b) => b.transferCount - a.transferCount)
+}
+
 async function fetchNetworkActivity({
   network,
   addresses,
@@ -533,6 +591,7 @@ async function fetchNetworkActivity({
   })
 
   const { logs, summary } = mapContractInteractions(dataset?.contractInteractions)
+  const transferCounterparties = summarizeTransferCounterparties(transfers)
 
   return {
     network,
@@ -540,6 +599,7 @@ async function fetchNetworkActivity({
     assetTransfers: transfers,
     contractInteractions: logs,
     interactedContracts: summary,
+    transferCounterparties,
   }
 }
 
@@ -554,6 +614,15 @@ function buildGlobalSummary(results: NetworkActivitySummary[]) {
       protocolSubtype?: string
       networks: Set<string>
       interactions: number
+    }
+  >()
+  const counterpartyMap = new Map<
+    string,
+    {
+      counterparty: string
+      direction: 'in' | 'out'
+      networks: Set<string>
+      transferCount: number
     }
   >()
 
@@ -580,6 +649,22 @@ function buildGlobalSummary(results: NetworkActivitySummary[]) {
         })
       }
     }
+
+    for (const counterparty of result.transferCounterparties) {
+      const key = `${counterparty.direction}:${counterparty.counterparty.toLowerCase()}`
+      const existing = counterpartyMap.get(key)
+      if (existing) {
+        existing.transferCount += counterparty.transferCount
+        existing.networks.add(result.network)
+      } else {
+        counterpartyMap.set(key, {
+          counterparty: counterparty.counterparty,
+          direction: counterparty.direction,
+          networks: new Set([result.network]),
+          transferCount: counterparty.transferCount,
+        })
+      }
+    }
   }
 
   return {
@@ -590,6 +675,12 @@ function buildGlobalSummary(results: NetworkActivitySummary[]) {
       protocolType: item.protocolType,
       protocolSubtype: item.protocolSubtype,
       interactions: item.interactions,
+      networks: Array.from(item.networks.values()),
+    })),
+    transferCounterparties: Array.from(counterpartyMap.values()).map(item => ({
+      counterparty: item.counterparty,
+      direction: item.direction,
+      transferCount: item.transferCount,
       networks: Array.from(item.networks.values()),
     })),
   }
@@ -642,7 +733,7 @@ task('bitquery-activity', '使用 Bitquery 查询地址的多链资产及交互�
         const result = await fetchNetworkActivity({ network, addresses, limit, apiKey, endpoint })
         results.push(result)
         Logger.info(
-          `网络 ${network} 查询完成: 余额记录 ${result.balances.length} 条，转账日志 ${result.assetTransfers.length} 条，合约交互 ${result.contractInteractions.length} 条`,
+          `网络 ${network} 查询完成: 余额记录 ${result.balances.length} 条，转账日志 ${result.assetTransfers.length} 条，对手方 ${result.transferCounterparties.length} 个，合约交互 ${result.contractInteractions.length} 条`,
         )
       } catch (error) {
         Logger.error(`查询网络 ${network} 失败`, error)
@@ -677,6 +768,18 @@ task('bitquery-activity', '使用 Bitquery 查询地址的多链资产及交互�
         .forEach((contract, index) => {
           Logger.info(
             `${index + 1}. ${contract.contractAddress} | 合约类型: ${contract.contractType || '-'} | 协议类型: ${contract.protocolType || '-'} | 合作网络: ${contract.networks.join(', ')} | 交互次数: ${contract.interactions}`,
+          )
+        })
+    }
+
+    if (summary.transferCounterparties.length > 0) {
+      Logger.info('主要转账对手方 (按出现次数排序):')
+      summary.transferCounterparties
+        .sort((a, b) => b.transferCount - a.transferCount)
+        .slice(0, 10)
+        .forEach((counterparty, index) => {
+          Logger.info(
+            `${index + 1}. ${counterparty.counterparty} | 方向: ${counterparty.direction} | 涉及网络: ${counterparty.networks.join(', ')} | 记录次数: ${counterparty.transferCount}`,
           )
         })
     }

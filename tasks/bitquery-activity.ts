@@ -18,193 +18,69 @@ interface GraphQLResponse<T> {
   errors?: Array<{ message?: string }>
 }
 
-interface BitqueryCurrency {
-  address?: string | null
-  symbol?: string | null
-  name?: string | null
-  protocolName?: string | null
-  decimals?: number | null
-  native?: boolean | null
-  fungible?: boolean | null
-}
-
 interface BitqueryBalanceEntry {
-  balance?: {
-    address?: string | null
-    amount?: string | null
-    amountUsd?: string | null
+  BalanceUpdate?: {
+    Address?: string | null
   } | null
-  currency?: BitqueryCurrency | null
-}
-
-interface BitqueryBlockInfo {
-  number?: string | null
-  time?: string | null
-}
-
-interface BitqueryTransferEntry {
-  block?: BitqueryBlockInfo | null
-  transaction?: {
-    hash?: string | null
-    to?: string | null
+  Currency?: {
+    SmartContract?: string | null
+    Symbol?: string | null
+    Name?: string | null
+    ProtocolName?: string | null
+    Decimals?: number | null
+    Native?: boolean | null
+    Fungible?: boolean | null
   } | null
-  transfer?: {
-    sender?: string | null
-    receiver?: string | null
-    amount?: string | null
-    amountUsd?: string | null
-    currency?: BitqueryCurrency | null
-  } | null
-}
-
-interface BitqueryContractCallEntry {
-  block?: BitqueryBlockInfo | null
-  transaction?: {
-    hash?: string | null
-    to?: string | null
-  } | null
-  call?: {
-    from?: string | null
-    to?: string | null
-    value?: string | null
-    valueUsd?: string | null
-    signature?: {
-      name?: string | null
-      signature?: string | null
-      signatureHash?: string | null
-    } | null
-  } | null
+  balance?: string | null
 }
 
 interface BitqueryTransactionEntry {
-  block?: BitqueryBlockInfo | null
-  transaction?: {
-    hash?: string | null
-    from?: string | null
-    to?: string | null
-    value?: string | null
-    valueUsd?: string | null
-    gas?: string | null
-    gasPrice?: string | null
-    nonce?: string | number | null
+  Block?: {
+    Number?: string | null
+    Time?: string | null
+  } | null
+  Transaction?: {
+    Hash?: string | null
+    From?: string | null
+    To?: string | null
+    Value?: string | null
+    ValueInUSD?: string | null
+    Gas?: string | null
+    GasPrice?: string | null
+    Nonce?: string | number | null
+    Type?: string | number | null
   } | null
 }
 
 interface BitqueryNetworkDataset {
-  balances?: BitqueryBalanceEntry[] | null
-  transfersSent?: BitqueryTransferEntry[] | null
-  transfersReceived?: BitqueryTransferEntry[] | null
-  contractInteractions?: BitqueryContractCallEntry[] | null
+  currentBalances?: BitqueryBalanceEntry[] | null
   transactions?: BitqueryTransactionEntry[] | null
-}
-
-interface ContractInteractionSummary {
-  contractAddress: string
-  contractAnnotation?: string
-  contractType?: string
-  protocolType?: string
-  protocolSubtype?: string
-  interactions: number
 }
 
 interface BitqueryQueryResponse {
   result?: BitqueryNetworkDataset | null
 }
 
-interface AddressBalanceSummary {
+type CounterpartyDirection = 'incoming' | 'outgoing' | 'both'
+
+interface CounterpartySummary {
   address: string
-  annotation?: string
-  contractType?: string
-  protocolType?: string
-  protocolSubtype?: string
-  balances: Array<{
-    symbol?: string
-    tokenAddress?: string
-    name?: string
-    protocolName?: string
-    decimals?: number
-    native?: boolean
-    fungible?: boolean
-    rawBalance?: string
-    value?: string
-    valueUsd?: string
-  }>
-}
-
-interface TransferLog {
-  direction: 'in' | 'out'
-  timestamp?: string
-  blockNumber?: number
-  txHash?: string
-  sender?: string
-  receiver?: string
-  amount?: string
-  symbol?: string
-  tokenAddress?: string
-  tokenName?: string
-  protocolName?: string
-  decimals?: number
-  native?: boolean
-  fungible?: boolean
-}
-
-interface ContractInteractionLog {
-  timestamp?: string
-  blockNumber?: number
-  txHash?: string
-  caller?: string
-  contractAddress?: string
-  txTo?: string
-  contractAnnotation?: string
-  contractType?: string
-  protocolType?: string
-  protocolSubtype?: string
-  method?: string
-  signature?: string
-}
-
-type TransactionDirection = 'in' | 'out' | 'unknown'
-
-interface TransactionLog {
-  timestamp?: string
-  blockNumber?: number
-  txHash?: string
-  direction: TransactionDirection
-  from?: string
-  to?: string
-  value?: string
-  valueUsd?: string
-  gas?: string
-  gasPrice?: string
-  nonce?: number
-  kind: 'contract' | 'contract_creation' | 'eoa' | 'unknown'
-  contractAddress?: string
-}
-
-interface TransactionSummary {
-  contractInteractions: number
-  eoaTransfers: number
-  contractCreations: number
-  unknown: number
-  total: number
-}
-
-interface TransferCounterpartySummary {
-  direction: 'in' | 'out'
-  counterparty: string
-  transferCount: number
+  direction: CounterpartyDirection
+  transactions: number
 }
 
 interface NetworkActivitySummary {
   network: string
-  balances: AddressBalanceSummary[]
-  assetTransfers: TransferLog[]
-  contractInteractions: ContractInteractionLog[]
-  interactedContracts: ContractInteractionSummary[]
-  transferCounterparties: TransferCounterpartySummary[]
-  excludedContractInteractions: number
-  transactions: TransactionLog[]
-  transactionSummary: TransactionSummary
+  result: {
+    currentBalances: BitqueryBalanceEntry[]
+    transactions: BitqueryTransactionEntry[]
+    counterparties: CounterpartySummary[]
+  }
+  stats: {
+    currentBalances: number
+    transactions: number
+    counterparties: number
+  }
 }
 
 function sanitizeNetworkName(network: string): string {
@@ -227,133 +103,68 @@ function sanitizeDataset(dataset?: string): DatasetArg {
   throw new Error(`非法的 Bitquery 数据集名称: ${dataset}，可选值为 ${DATASETS.join(', ')}`)
 }
 
+function parseSince(input?: string): string | undefined {
+  if (!input) {
+    return undefined
+  }
+  const trimmed = input.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`无法解析的开始时间: ${input}，请使用 ISO8601 格式，例如 2024-01-01T00:00:00Z`)
+  }
+  return parsed.toISOString()
+}
+
 function buildNetworkQuery(network: string): string {
   const safeNetwork = sanitizeNetworkName(network)
   return `
-    query AddressActivity($addresses: [String!], $limit: Int!, $dataset: dataset_arg_enum!) {
+    query AddressActivity($addresses: [String!], $limit: Int!, $dataset: dataset_arg_enum!, $since: DateTime) {
       result: EVM(network: ${safeNetwork}, dataset: $dataset) {
-        balances: BalanceUpdates(
-          where: { any: [{ BalanceUpdate: { Address: { in: $addresses } } }] }
-          orderBy: [{ descending: Block_Time }]
-          limit: { count: $limit }
+        currentBalances: BalanceUpdates(
+          where: { BalanceUpdate: { Address: { in: $addresses } } }
+          orderBy: [{ descendingByField: "balance" }]
         ) {
-          balance: BalanceUpdate {
-            address: Address
-            amount: Amount
-            amountUsd: AmountInUSD
+          BalanceUpdate {
+            Address
           }
-          currency: Currency {
-            address: SmartContract
-            symbol: Symbol
-            name: Name
-            protocolName: ProtocolName
-            decimals: Decimals
-            native: Native
-            fungible: Fungible
+          Currency {
+            SmartContract
+            Symbol
+            Name
+            Decimals
+            Native
+            Fungible
           }
-        }
-        transfersSent: Transfers(
-          where: { any: [{ Transfer: { Sender: { in: $addresses } } }] }
-          orderBy: [{ descending: Block_Time }]
-          limit: { count: $limit }
-        ) {
-          block: Block {
-            number: Number
-            time: Time
-          }
-          transaction: Transaction {
-            hash: Hash
-            to: To
-          }
-          transfer: Transfer {
-            sender: Sender
-            receiver: Receiver
-            amount: Amount
-            amountUsd: AmountInUSD
-            currency: Currency {
-              address: SmartContract
-              symbol: Symbol
-              name: Name
-              protocolName: ProtocolName
-              decimals: Decimals
-              native: Native
-              fungible: Fungible
-            }
-          }
-        }
-        transfersReceived: Transfers(
-          where: { any: [{ Transfer: { Receiver: { in: $addresses } } }] }
-          orderBy: [{ descending: Block_Time }]
-          limit: { count: $limit }
-        ) {
-          block: Block {
-            number: Number
-            time: Time
-          }
-          transaction: Transaction {
-            hash: Hash
-          }
-          transfer: Transfer {
-            sender: Sender
-            receiver: Receiver
-            amount: Amount
-            amountUsd: AmountInUSD
-            currency: Currency {
-              address: SmartContract
-              symbol: Symbol
-              name: Name
-              protocolName: ProtocolName
-              decimals: Decimals
-              native: Native
-              fungible: Fungible
-            }
-          }
-        }
-        contractInteractions: Calls(
-          where: { any: [{ Call: { From: { in: $addresses } } }] }
-          orderBy: [{ descending: Block_Time }]
-          limit: { count: $limit }
-        ) {
-          block: Block {
-            number: Number
-            time: Time
-          }
-          transaction: Transaction {
-            hash: Hash
-          }
-          call: Call {
-            from: From
-            to: To
-            value: Value
-            valueUsd: ValueInUSD
-            signature: Signature {
-              name: Name
-              signature: Signature
-              signatureHash: SignatureHash
-            }
-          }
+          balance: sum(of: BalanceUpdate_Amount, selectWhere: { gt: "0" })
         }
         transactions: Transactions(
-          where: { any: [
-            { Transaction: { From: { in: $addresses } } },
-            { Transaction: { To: { in: $addresses } } }
-          ] }
+          where: {
+            any: [
+              { Transaction: { From: { in: $addresses } } },
+              { Transaction: { To: { in: $addresses } } }
+            ]
+            Block: { Time: { since: $since } }
+          }
           orderBy: [{ descending: Block_Time }]
           limit: { count: $limit }
         ) {
-          block: Block {
-            number: Number
-            time: Time
+          Block {
+            Number
+            Time
           }
-          transaction: Transaction {
-            hash: Hash
-            from: From
-            to: To
-            value: Value
-            valueUsd: ValueInUSD
-            gas: Gas
-            gasPrice: GasPrice
-            nonce: Nonce
+          Transaction {
+            Hash
+            From
+            To
+            Value
+            ValueInUSD
+            Gas
+            GasPrice
+            Nonce
+            Type
           }
         }
       }
@@ -387,6 +198,7 @@ async function executeBitqueryQuery<T>({
           'Content-Length': Buffer.byteLength(payload),
           'User-Agent': 'token-utils-distribution/bitquery-task',
           Authorization: `Bearer ${apiKey}`,
+          'X-API-KEY': apiKey,
         },
       },
       res => {
@@ -497,272 +309,105 @@ function ensureOutputDirectory(filePath: string): void {
   }
 }
 
-function normalizeTimestamp(timestamp?: string | null): string | undefined {
-  if (!timestamp) return undefined
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) {
-    return timestamp || undefined
-  }
-  return date.toISOString()
+function mapCurrentBalances(records: BitqueryBalanceEntry[] | null | undefined): BitqueryBalanceEntry[] {
+  if (!records) return []
+  return records
+    .filter((record): record is BitqueryBalanceEntry => Boolean(record))
+    .map(record => ({
+      BalanceUpdate: record.BalanceUpdate ?? null,
+      Currency: record.Currency ?? null,
+      balance: record.balance ?? null,
+    }))
 }
 
-function mapBalances(records: BitqueryBalanceEntry[] | null | undefined): AddressBalanceSummary[] {
+function mapTransactions(records: BitqueryTransactionEntry[] | null | undefined): BitqueryTransactionEntry[] {
   if (!records) return []
+  return records
+    .filter((record): record is BitqueryTransactionEntry => Boolean(record))
+    .map(record => {
+      const originalTime = record.Block?.Time ?? null
+      const block = record.Block
+        ? {
+            Number: record.Block.Number ?? null,
+            Time: originalTime,
+          }
+        : null
 
-  const summaries = new Map<string, AddressBalanceSummary>()
+      return {
+        Block: block,
+        Transaction: record.Transaction
+          ? {
+              Hash: record.Transaction.Hash ?? null,
+              From: record.Transaction.From ?? null,
+              To: record.Transaction.To ?? null,
+              Value: record.Transaction.Value ?? null,
+              ValueInUSD: record.Transaction.ValueInUSD ?? null,
+              Gas: record.Transaction.Gas ?? null,
+              GasPrice: record.Transaction.GasPrice ?? null,
+              Nonce: record.Transaction.Nonce ?? null,
+              Type: record.Transaction.Type ?? null,
+            }
+          : null,
+      }
+    })
+}
 
-  for (const record of records) {
-    const address = record.balance?.address
-    if (!address) continue
+function summarizeCounterparties(transactions: BitqueryTransactionEntry[], trackedAddresses: string[]): CounterpartySummary[] {
+  if (transactions.length === 0) {
+    return []
+  }
 
-    let summary = summaries.get(address)
-    if (!summary) {
-      summary = {
+  const trackedSet = new Set(trackedAddresses.map(address => address.toLowerCase()))
+  const summary = new Map<
+    string,
+    {
+      address: string
+      direction: CounterpartyDirection
+      transactions: number
+    }
+  >()
+
+  const update = (address: string, direction: CounterpartyDirection) => {
+    const key = address.toLowerCase()
+    if (trackedSet.has(key)) {
+      return
+    }
+    const existing = summary.get(key)
+    if (existing) {
+      existing.transactions += 1
+      if (existing.direction !== direction) {
+        existing.direction = 'both'
+      }
+    } else {
+      summary.set(key, {
         address,
-        balances: [],
-      }
-      summaries.set(address, summary)
-    }
-
-    summary.balances.push({
-      symbol: record.currency?.symbol ?? undefined,
-      tokenAddress: record.currency?.address ?? undefined,
-      name: record.currency?.name ?? undefined,
-      protocolName: record.currency?.protocolName ?? undefined,
-      decimals: record.currency?.decimals ?? undefined,
-      native: record.currency?.native ?? undefined,
-      fungible: record.currency?.fungible ?? undefined,
-      rawBalance: record.balance?.amount ?? undefined,
-      value: record.balance?.amount ?? undefined,
-      valueUsd: record.balance?.amountUsd ?? undefined,
-    })
-  }
-
-  return Array.from(summaries.values())
-}
-
-function mapTransfers(records: BitqueryTransferEntry[] | null | undefined, direction: 'in' | 'out'): TransferLog[] {
-  if (!records) return []
-
-  return records.map(record => {
-    const rawBlockNumber = record.block?.number ? Number(record.block.number) : undefined
-    const blockNumber = rawBlockNumber !== undefined && !Number.isNaN(rawBlockNumber) ? rawBlockNumber : undefined
-    const transfer = record.transfer
-
-    return {
-      direction,
-      timestamp: normalizeTimestamp(record.block?.time ?? undefined),
-      blockNumber,
-      txHash: record.transaction?.hash ?? undefined,
-      sender: transfer?.sender ?? undefined,
-      receiver: transfer?.receiver ?? undefined,
-      amount: transfer?.amount ?? undefined,
-      symbol: transfer?.currency?.symbol ?? undefined,
-      tokenAddress: transfer?.currency?.address ?? undefined,
-      tokenName: transfer?.currency?.name ?? undefined,
-      protocolName: transfer?.currency?.protocolName ?? undefined,
-      decimals: transfer?.currency?.decimals ?? undefined,
-      native: transfer?.currency?.native ?? undefined,
-      fungible: transfer?.currency?.fungible ?? undefined,
-    }
-  })
-}
-
-function mapContractInteractions(records: BitqueryContractCallEntry[] | null | undefined): {
-  logs: ContractInteractionLog[]
-  summary: ContractInteractionSummary[]
-  excludedDueToTransactionTo: number
-  contractTransactionHashes: string[]
-  calledContractAddresses: string[]
-} {
-  if (!records) {
-    return { logs: [], summary: [], excludedDueToTransactionTo: 0, contractTransactionHashes: [], calledContractAddresses: [] }
-  }
-
-  const logs: ContractInteractionLog[] = []
-  const summaryMap = new Map<string, ContractInteractionSummary>()
-  let excludedDueToTransactionTo = 0
-  const contractTransactionHashes = new Set<string>()
-  const calledContractAddresses = new Set<string>()
-
-  for (const record of records) {
-    const rawBlockNumber = record.block?.number ? Number(record.block.number) : undefined
-    const blockNumber = rawBlockNumber !== undefined && !Number.isNaN(rawBlockNumber) ? rawBlockNumber : undefined
-    const caller = record.call?.from ?? undefined
-    const contractAddress = record.call?.to ?? undefined
-    const transactionTo = record.transaction?.to ?? undefined
-    const txHash = record.transaction?.hash ?? undefined
-
-    const log: ContractInteractionLog = {
-      timestamp: normalizeTimestamp(record.block?.time ?? undefined),
-      blockNumber,
-      txHash: record.transaction?.hash ?? undefined,
-      caller,
-      contractAddress,
-      txTo: transactionTo ?? undefined,
-      method: record.call?.signature?.name ?? undefined,
-      signature: record.call?.signature?.signature ?? undefined,
-    }
-
-    logs.push(log)
-
-    if (txHash) {
-      contractTransactionHashes.add(txHash.toLowerCase())
-    }
-    if (contractAddress) {
-      calledContractAddresses.add(contractAddress.toLowerCase())
-    }
-
-    const key = (contractAddress || '').toLowerCase()
-    const matchesTransactionTo = transactionTo && contractAddress && transactionTo.toLowerCase() === contractAddress.toLowerCase()
-
-    if (!key || matchesTransactionTo) {
-      if (matchesTransactionTo && key) {
-        excludedDueToTransactionTo += 1
-      }
-      continue
-    }
-
-    const existing = summaryMap.get(key)
-    if (existing) {
-      existing.interactions += 1
-    } else {
-      summaryMap.set(key, {
-        contractAddress: contractAddress!,
-        contractAnnotation: undefined,
-        contractType: undefined,
-        protocolType: undefined,
-        protocolSubtype: undefined,
-        interactions: 1,
-      })
-    }
-  }
-
-  return {
-    logs,
-    summary: Array.from(summaryMap.values()),
-    excludedDueToTransactionTo,
-    contractTransactionHashes: Array.from(contractTransactionHashes.values()),
-    calledContractAddresses: Array.from(calledContractAddresses.values()),
-  }
-}
-
-function summarizeTransferCounterparties(transfers: TransferLog[]): TransferCounterpartySummary[] {
-  const summaryMap = new Map<string, TransferCounterpartySummary>()
-
-  for (const transfer of transfers) {
-    const direction = transfer.direction
-    const counterparty = direction === 'out' ? transfer.receiver : transfer.sender
-    if (!counterparty) continue
-
-    const key = `${direction}:${counterparty.toLowerCase()}`
-    const existing = summaryMap.get(key)
-    if (existing) {
-      existing.transferCount += 1
-    } else {
-      summaryMap.set(key, {
         direction,
-        counterparty,
-        transferCount: 1,
+        transactions: 1,
       })
     }
   }
 
-  return Array.from(summaryMap.values()).sort((a, b) => b.transferCount - a.transferCount)
-}
+  for (const entry of transactions) {
+    const tx = entry.Transaction
+    if (!tx) continue
 
-function mapTransactions(
-  records: BitqueryTransactionEntry[] | null | undefined,
-  trackedAddresses: string[],
-  contractTransactionHashes?: string[],
-  knownContractAddresses?: string[],
-): { logs: TransactionLog[]; summary: TransactionSummary } {
-  const summary: TransactionSummary = {
-    contractInteractions: 0,
-    eoaTransfers: 0,
-    contractCreations: 0,
-    unknown: 0,
-    total: 0,
-  }
+    const from = tx.From ?? undefined
+    const to = tx.To ?? undefined
+    const fromLower = from ? from.toLowerCase() : undefined
+    const toLower = to ? to.toLowerCase() : undefined
 
-  if (!records || records.length === 0) {
-    return { logs: [], summary }
-  }
+    const fromTracked = fromLower ? trackedSet.has(fromLower) : false
+    const toTracked = toLower ? trackedSet.has(toLower) : false
 
-  const addressSet = new Set(trackedAddresses.map(address => address.toLowerCase()))
-  const contractHashSet = new Set((contractTransactionHashes || []).filter(Boolean).map(hash => hash.toLowerCase()))
-  const contractAddressSet = new Set((knownContractAddresses || []).filter(Boolean).map(address => address.toLowerCase()))
-  const logs: TransactionLog[] = []
-
-  for (const record of records) {
-    const rawBlockNumber = record.block?.number ? Number(record.block.number) : undefined
-    const blockNumber = rawBlockNumber !== undefined && !Number.isNaN(rawBlockNumber) ? rawBlockNumber : undefined
-    const timestamp = normalizeTimestamp(record.block?.time ?? undefined)
-    const tx = record.transaction
-
-    const from = tx?.from ?? undefined
-    const to = tx?.to ?? undefined
-    const normalizedTo = to ? to.toLowerCase() : undefined
-    const normalizedHash = tx?.hash ? tx.hash.toLowerCase() : undefined
-    const isZeroAddress = normalizedTo === '0x0000000000000000000000000000000000000000'
-
-    let direction: TransactionDirection = 'unknown'
-    if (from && addressSet.has(from.toLowerCase())) {
-      direction = 'out'
-    } else if (to && addressSet.has(to.toLowerCase())) {
-      direction = 'in'
+    if (fromTracked && to) {
+      update(to, 'outgoing')
     }
-
-    const isContractCreation = !to || normalizedTo === '0x' || isZeroAddress
-    const hasKnownCall = normalizedHash ? contractHashSet.has(normalizedHash) : false
-    const targetsKnownContract = normalizedTo ? contractAddressSet.has(normalizedTo) : false
-    const isContractInteraction = hasKnownCall || targetsKnownContract
-
-    let kind: TransactionLog['kind']
-    if (isContractCreation) {
-      kind = 'contract_creation'
-      summary.contractCreations += 1
-    } else if (isContractInteraction) {
-      kind = 'contract'
-      summary.contractInteractions += 1
-    } else if (to || from) {
-      kind = 'eoa'
-      summary.eoaTransfers += 1
-    } else {
-      kind = 'unknown'
-      summary.unknown += 1
+    if (toTracked && from) {
+      update(from, 'incoming')
     }
-
-    summary.total += 1
-
-    const nonceRaw = tx?.nonce
-    const nonceNumber = typeof nonceRaw === 'number' ? nonceRaw : nonceRaw ? Number(nonceRaw) : undefined
-    const nonce = nonceNumber !== undefined && !Number.isNaN(nonceNumber) ? nonceNumber : undefined
-
-    logs.push({
-      timestamp,
-      blockNumber,
-      txHash: tx?.hash ?? undefined,
-      direction,
-      from,
-      to,
-      value: tx?.value ?? undefined,
-      valueUsd: tx?.valueUsd ?? undefined,
-      gas: tx?.gas ?? undefined,
-      gasPrice: tx?.gasPrice ?? undefined,
-      nonce,
-      contractAddress: isContractInteraction && to ? to : undefined,
-      kind,
-    })
   }
 
-  logs.sort((a, b) => {
-    const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
-    const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
-    return bTime - aTime
-  })
-
-  return { logs, summary }
+  return Array.from(summary.values()).sort((a, b) => b.transactions - a.transactions)
 }
 
 async function fetchNetworkActivity({
@@ -772,6 +417,7 @@ async function fetchNetworkActivity({
   apiKey,
   endpoint,
   dataset,
+  since,
 }: {
   network: string
   addresses: string[]
@@ -779,147 +425,67 @@ async function fetchNetworkActivity({
   apiKey: string
   endpoint: string
   dataset: DatasetArg
+  since?: string
 }): Promise<NetworkActivitySummary> {
   Logger.info(`查询网络 ${network} 的资产与交互日志...`)
 
   const query = buildNetworkQuery(network)
-  const variables = { addresses, limit, dataset }
+  const variables = { addresses, limit, dataset, since: since ?? null }
   const data = await executeBitqueryQuery<BitqueryQueryResponse>({ query, variables, apiKey, endpoint })
   const datasetResult = data.result
 
-  const balances = mapBalances(datasetResult?.balances)
-  const transfersOut = mapTransfers(datasetResult?.transfersSent, 'out')
-  const transfersIn = mapTransfers(datasetResult?.transfersReceived, 'in')
-  const transfers = [...transfersOut, ...transfersIn]
+  const currentBalances = mapCurrentBalances(datasetResult?.currentBalances)
+  const transactions = mapTransactions(datasetResult?.transactions)
+  const counterparties = summarizeCounterparties(transactions, addresses)
 
-  transfers.sort((a, b) => {
-    const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
-    const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
-    return bTime - aTime
-  })
-
-  const {
-    logs: contractLogs,
-    summary: contractSummaries,
-    excludedDueToTransactionTo,
-    contractTransactionHashes,
-    calledContractAddresses,
-  } = mapContractInteractions(datasetResult?.contractInteractions)
-  const transferCounterparties = summarizeTransferCounterparties(transfers)
-  const { logs: transactionLogs, summary: transactionSummary } = mapTransactions(
-    datasetResult?.transactions,
-    addresses,
-    contractTransactionHashes,
-    calledContractAddresses,
+  Logger.info(
+    `网络 ${network} 查询完成: 余额记录 ${currentBalances.length} 条，交易 ${transactions.length} 条，对手方 ${counterparties.length} 个`,
   )
 
   return {
     network,
-    balances,
-    assetTransfers: transfers,
-    contractInteractions: contractLogs,
-    interactedContracts: contractSummaries,
-    transferCounterparties,
-    excludedContractInteractions: excludedDueToTransactionTo,
-    transactions: transactionLogs,
-    transactionSummary,
+    result: {
+      currentBalances,
+      transactions,
+      counterparties,
+    },
+    stats: {
+      currentBalances: currentBalances.length,
+      transactions: transactions.length,
+      counterparties: counterparties.length,
+    },
   }
 }
 
 function buildGlobalSummary(results: NetworkActivitySummary[]) {
-  const contractMap = new Map<
-    string,
-    {
-      contractAddress: string
-      contractAnnotation?: string
-      contractType?: string
-      protocolType?: string
-      protocolSubtype?: string
-      networks: Set<string>
-      interactions: number
-    }
-  >()
-  const counterpartyMap = new Map<
-    string,
-    {
-      counterparty: string
-      direction: 'in' | 'out'
-      networks: Set<string>
-      transferCount: number
-    }
-  >()
-  const transactionTotals: TransactionSummary = {
-    contractInteractions: 0,
-    eoaTransfers: 0,
-    contractCreations: 0,
-    unknown: 0,
-    total: 0,
-  }
+  let totalBalances = 0
+  let totalTransactions = 0
+  let totalCounterparties = 0
+  const networkBreakdown: Array<{
+    network: string
+    currentBalances: number
+    transactions: number
+    counterparties: number
+  }> = []
 
   for (const result of results) {
-    for (const contract of result.interactedContracts) {
-      const key = contract.contractAddress.toLowerCase()
-      const existing = contractMap.get(key)
-      if (existing) {
-        existing.interactions += contract.interactions
-        existing.networks.add(result.network)
-        existing.contractAnnotation = existing.contractAnnotation || contract.contractAnnotation
-        existing.contractType = existing.contractType || contract.contractType
-        existing.protocolType = existing.protocolType || contract.protocolType
-        existing.protocolSubtype = existing.protocolSubtype || contract.protocolSubtype
-      } else {
-        contractMap.set(key, {
-          contractAddress: contract.contractAddress,
-          contractAnnotation: contract.contractAnnotation,
-          contractType: contract.contractType,
-          protocolType: contract.protocolType,
-          protocolSubtype: contract.protocolSubtype,
-          networks: new Set([result.network]),
-          interactions: contract.interactions,
-        })
-      }
-    }
-
-    for (const counterparty of result.transferCounterparties) {
-      const key = `${counterparty.direction}:${counterparty.counterparty.toLowerCase()}`
-      const existing = counterpartyMap.get(key)
-      if (existing) {
-        existing.transferCount += counterparty.transferCount
-        existing.networks.add(result.network)
-      } else {
-        counterpartyMap.set(key, {
-          counterparty: counterparty.counterparty,
-          direction: counterparty.direction,
-          networks: new Set([result.network]),
-          transferCount: counterparty.transferCount,
-        })
-      }
-    }
-
-    transactionTotals.contractInteractions += result.transactionSummary.contractInteractions
-    transactionTotals.eoaTransfers += result.transactionSummary.eoaTransfers
-    transactionTotals.contractCreations += result.transactionSummary.contractCreations
-    transactionTotals.unknown += result.transactionSummary.unknown
-    transactionTotals.total += result.transactionSummary.total
+    totalBalances += result.stats.currentBalances
+    totalTransactions += result.stats.transactions
+    totalCounterparties += result.stats.counterparties
+    networkBreakdown.push({
+      network: result.network,
+      currentBalances: result.stats.currentBalances,
+      transactions: result.stats.transactions,
+      counterparties: result.stats.counterparties,
+    })
   }
 
   return {
-    interactedContracts: Array.from(contractMap.values()).map(item => ({
-      contractAddress: item.contractAddress,
-      contractAnnotation: item.contractAnnotation,
-      contractType: item.contractType,
-      protocolType: item.protocolType,
-      protocolSubtype: item.protocolSubtype,
-      interactions: item.interactions,
-      networks: Array.from(item.networks.values()),
-    })),
-    transferCounterparties: Array.from(counterpartyMap.values()).map(item => ({
-      counterparty: item.counterparty,
-      direction: item.direction,
-      transferCount: item.transferCount,
-      networks: Array.from(item.networks.values()),
-    })),
-    transactionSummary: transactionTotals,
+    totalNetworks: results.length,
+    totalBalances,
+    totalTransactions,
+    totalCounterparties,
+    networkBreakdown,
   }
 }
 
@@ -929,6 +495,7 @@ task('bitquery-activity', '使用 Bitquery 查询地址的多链资产及交互�
   .addOptionalParam('networks', 'Bitquery 支持的网络列表，逗号分隔', DEFAULT_NETWORKS.join(','))
   .addOptionalParam('limit', '每种日志在每个网络中返回的最大数量', 100, types.int)
   .addOptionalParam('dataset', 'Bitquery 数据集，可选 realtime、archive 或 combined', DEFAULT_DATASET)
+  .addOptionalParam('since', '限制交易的开始时间 (ISO8601)', '2025-01-01T00:00:00Z', types.string)
   .addOptionalParam('output', '保存结果的 JSON 文件路径', DEFAULT_OUTPUT_PATH)
   .addOptionalParam('endpoint', 'Bitquery GraphQL 端点', BITQUERY_DEFAULT_ENDPOINT)
   .addOptionalParam('apiKey', 'Bitquery API Key，默认读取 BITQUERY_API_KEY 环境变量')
@@ -954,6 +521,7 @@ task('bitquery-activity', '使用 Bitquery 查询地址的多链资产及交互�
     const endpoint: string = taskArgs.endpoint || BITQUERY_DEFAULT_ENDPOINT
     const apiKey: string = (taskArgs.apiKey || process.env.BITQUERY_API_KEY || '').trim()
     const datasetArg: DatasetArg = sanitizeDataset(taskArgs.dataset)
+    const since = parseSince(taskArgs.since)
 
     if (!apiKey) {
       throw new Error('未找到 Bitquery API Key，请通过 --api-key 参数或设置 BITQUERY_API_KEY 环境变量')
@@ -965,36 +533,30 @@ task('bitquery-activity', '使用 Bitquery 查询地址的多链资产及交互�
     Logger.info(`每种日志最大返回数量: ${limit}`)
     Logger.info(`Bitquery 端点: ${endpoint}`)
     Logger.info(`Bitquery 数据集: ${datasetArg}`)
+    if (since) {
+      Logger.info(`交易筛选起始时间: ${since}`)
+    }
 
     const results: NetworkActivitySummary[] = []
 
     for (const network of networks) {
       try {
-        const result = await fetchNetworkActivity({ network, addresses, limit, apiKey, endpoint, dataset: datasetArg })
+        const result = await fetchNetworkActivity({
+          network,
+          addresses,
+          limit,
+          apiKey,
+          endpoint,
+          dataset: datasetArg,
+          since,
+        })
         results.push(result)
-        const excludedNote =
-          result.excludedContractInteractions > 0
-            ? `（其中 ${result.excludedContractInteractions} 条调用因等于交易 To 地址而被排除出统计）`
-            : ''
-        const txSummary = result.transactionSummary
-        const txSummaryParts = [
-          `合约交互 ${txSummary.contractInteractions} 条`,
-          `普通交易 ${txSummary.eoaTransfers} 条`,
-          `合约创建 ${txSummary.contractCreations} 条`,
-        ]
-        if (txSummary.unknown > 0) {
-          txSummaryParts.push(`未知 ${txSummary.unknown} 条`)
-        }
-        Logger.info(
-          `网络 ${network} 查询完成: 余额记录 ${result.balances.length} 条，转账日志 ${result.assetTransfers.length} 条，对手方 ${result.transferCounterparties.length} 个，合约交互 ${result.contractInteractions.length} 条${excludedNote}，交易 ${result.transactions.length} 条（${txSummaryParts.join('，')}）`,
-        )
       } catch (error) {
         Logger.error(`查询网络 ${network} 失败`, error)
       }
     }
 
     const summary = buildGlobalSummary(results)
-    const totalExcludedContractInteractions = results.reduce((acc, item) => acc + item.excludedContractInteractions, 0)
     const outputPath = path.resolve(taskArgs.output || DEFAULT_OUTPUT_PATH)
     ensureOutputDirectory(outputPath)
 
@@ -1005,55 +567,18 @@ task('bitquery-activity', '使用 Bitquery 查询地址的多链资产及交互�
         limit,
         endpoint,
         dataset: datasetArg,
+        since,
         generatedAt: new Date().toISOString(),
         elapsedMs: Date.now() - startTime,
       },
       results,
       summary,
-      excludedContractInteractions: totalExcludedContractInteractions,
     }
 
     writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8')
     Logger.info(`结果已保存到 ${outputPath}`)
 
-    if (summary.transactionSummary.total > 0) {
-      const tx = summary.transactionSummary
-      const summaryParts = [
-        `合约交互 ${tx.contractInteractions} 条`,
-        `普通交易 ${tx.eoaTransfers} 条`,
-        `合约创建 ${tx.contractCreations} 条`,
-      ]
-      if (tx.unknown > 0) {
-        summaryParts.push(`未知 ${tx.unknown} 条`)
-      }
-      Logger.info(`所有网络交易汇总: 总计 ${tx.total} 条 (${summaryParts.join('，')})`)
-    }
-
-    if (summary.interactedContracts.length > 0) {
-      Logger.info('交互过的合约 (按交互次数排序):')
-      summary.interactedContracts
-        .sort((a, b) => b.interactions - a.interactions)
-        .slice(0, 10)
-        .forEach((contract, index) => {
-          Logger.info(
-            `${index + 1}. ${contract.contractAddress} | 合约类型: ${contract.contractType || '-'} | 协议类型: ${contract.protocolType || '-'} | 合作网络: ${contract.networks.join(', ')} | 交互次数: ${contract.interactions}`,
-          )
-        })
-    } else if (totalExcludedContractInteractions > 0) {
-      Logger.info(
-        `未统计到新的合约交互；检测到 ${totalExcludedContractInteractions} 条调用的目标地址与交易 To 相同，已从统计中排除，可在详细日志中查看。`,
-      )
-    }
-
-    if (summary.transferCounterparties.length > 0) {
-      Logger.info('主要转账对手方 (按出现次数排序):')
-      summary.transferCounterparties
-        .sort((a, b) => b.transferCount - a.transferCount)
-        .slice(0, 10)
-        .forEach((counterparty, index) => {
-          Logger.info(
-            `${index + 1}. ${counterparty.counterparty} | 方向: ${counterparty.direction} | 涉及网络: ${counterparty.networks.join(', ')} | 记录次数: ${counterparty.transferCount}`,
-          )
-        })
-    }
+    Logger.info(
+      `所有网络汇总: 余额记录 ${summary.totalBalances} 条，交易 ${summary.totalTransactions} 条，对手方 ${summary.totalCounterparties} 个，覆盖 ${summary.totalNetworks} 个网络`,
+    )
   })
